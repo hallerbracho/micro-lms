@@ -2,3 +2,4 @@ streamlit
 pandas
 libsql-client
 libsql_experimental
+fpdf
