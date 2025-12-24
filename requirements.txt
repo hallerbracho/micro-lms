@@ -5,3 +5,4 @@ libsql_experimental
 fpdf
 plotly
 extra-streamlit-components
+matplotlib
