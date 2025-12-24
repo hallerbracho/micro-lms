@@ -23,6 +23,7 @@ ST_STYLE = """
 st.markdown(ST_STYLE, unsafe_allow_html=True)
 
 # Plantilla por defecto para nuevos exámenes
+
 DEFAULT_TEMPLATE = """# --- INICIO DE PLANTILLA ---
 # Variables inyectadas: st, pd, np, random, db, EXAM_ID, student_id (si ya fue ingresado)
 
@@ -50,13 +51,6 @@ solucion = a + b
 
 st.markdown(f"## {titulo}")
 
-
-# --- VISUALIZACIÓN PARA PROFESORES ---
-if is_admin:
-    st.warning(f"VISTA DOCENTE - Solución correcta: {solucion}")
-# -------------------------------------
-
-
 st.info(f"¿Cuánto es {a} + {b}?")
 
 respuesta = st.number_input("Respuesta:", step=0.0001)
@@ -72,6 +66,7 @@ if st.button("Enviar"):
     else:
         st.error("Incorrecto.")
 """
+
 
 # ==============================================================================
 # 2. CAPA DE DATOS (Turso / LibSQL)
@@ -221,7 +216,7 @@ def execute_exam(exam_id):
     source_code = db_manager.get_exam_code(exam_id)
     
     if not source_code:
-        st.error("🚫 El examen solicitado no existe o no está disponible.")
+        st.error("El examen solicitado no existe o no está disponible.")
         if st.button("Volver al Inicio"):
             st.query_params.clear()
             st.rerun()
@@ -249,7 +244,7 @@ def execute_exam(exam_id):
             st.code(str(e))
 
 def render_admin_panel():
-    st.title("Panel de Control Docente")
+    st.header("Panel de Control Docente", divider=True)
     
     if not st.session_state.get('auth'):
         pwd = st.text_input("Contraseña de Administrador", type="password")
@@ -270,7 +265,7 @@ def render_admin_panel():
             del st.session_state[key]
         st.rerun()
 
-    tab_editor, tab_grades = st.tabs(["📝 Gestión de Exámenes", "📊 Libro de Notas"])
+    tab_editor, tab_grades = st.tabs(["Gestión de Exámenes", "Libro de Notas"])
 
     with tab_editor:
         exam_ids = db_manager.get_exam_list()
@@ -301,7 +296,7 @@ def render_admin_panel():
         c1, c2, c3 = st.columns([1, 1, 2])
         
         with c1:
-            if st.button("💾 Guardar", type="primary"):
+            if st.button("Guardar", type="primary"):
                 target_id = st.session_state.get('current_exam_id', "").strip()
                 if not target_id:
                     st.error("Debe ingresar un ID para el examen")
@@ -313,7 +308,7 @@ def render_admin_panel():
 
         with c2:
             if selection != "➕ Crear Nuevo...":
-                if st.button("🗑️ Eliminar"):
+                if st.button("Eliminar"):
                     db_manager.delete_exam(selection)
                     st.toast("Examen eliminado")
                     st.session_state['last_selection'] = None
@@ -321,12 +316,16 @@ def render_admin_panel():
         
         with c3:
             if selection != "➕ Crear Nuevo...":
+            # Construimos la URL relativa
                 link = f"/?eval={selection}"
+        
                 st.code(link, language="text")
-                st.caption("Comparte este link con los alumnos")
+        
+                # Este botón abrirá automáticamente en una pestaña nueva
+                st.link_button("Previsualizar Examen", link)
 
     with tab_grades:
-        if st.button("🔄 Refrescar Tabla"):
+        if st.button("Refrescar Tabla"):
             st.rerun()
             
         df = db_manager.get_all_grades()
@@ -337,7 +336,7 @@ def render_admin_panel():
             
             st.dataframe(
                 df, 
-                use_container_width=True,
+                width='stretch',
                 column_config={
                     "is_correct": st.column_config.CheckboxColumn("Aprobado"),
                     "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f"),

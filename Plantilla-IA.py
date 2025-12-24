@@ -2,9 +2,9 @@
 # Variables inyectadas: st, pd, np, random, db, EXAM_ID, student_id (si ya fue ingresado)
 
 # 1. VALIDACIÓN
-student_id = st.text_input("Ingrese su Cédula / ID", max_chars=12).strip()
+student_id = st.text_input("Ingresa tu cédula de identidad (sólo números)", max_chars=12).strip()
 if not student_id:
-    st.warning("Ingrese su ID para comenzar.")
+    st.warning("Ingrese su Cédula para comenzar.")
     st.stop()
 
 # Verificar estado
@@ -21,6 +21,9 @@ random.seed(seed_val)
 ########################################################################################
 # 2. CONTENIDO (MODIFICAR AQUÍ)
 
+if 'is_admin' not in globals():
+    is_admin = False
+    
 titulo = "Pregunta de Ejemplo"
 a = random.randint(1, 10)
 b = random.randint(1, 10)
@@ -42,8 +45,7 @@ if st.button("Enviar"):
     es_correcto = (respuesta == solucion)
     intentos, nota = db.register_attempt(EXAM_ID, student_id, es_correcto)
     
-    if es_correcto:
-        #st.balloons()
+    if es_correcto:        
         st.success(f"¡Correcto! Nota: {nota}")
     else:
         st.error("Incorrecto.")
