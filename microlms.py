@@ -243,6 +243,10 @@ def execute_exam(exam_id):
         with st.expander("Detalles para el profesor"):
             st.code(str(e))
 
+# ==============================================================================
+# REEMPLAZAR LA FUNCIÓN render_admin_panel COMPLETA CON ESTA VERSIÓN
+# ==============================================================================
+
 def render_admin_panel():
     st.header("Panel de Control Docente", divider=True)
     
@@ -265,8 +269,12 @@ def render_admin_panel():
             del st.session_state[key]
         st.rerun()
 
-    tab_editor, tab_grades = st.tabs(["Gestión de Exámenes", "Libro de Notas"])
+    # --- AHORA SON 3 PESTAÑAS ---
+    tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
 
+    # --------------------------------------------------------------------------
+    # PESTAÑA 1: EDITOR
+    # --------------------------------------------------------------------------
     with tab_editor:
         exam_ids = db_manager.get_exam_list()
         options = ["➕ Crear Nuevo..."] + exam_ids
@@ -316,14 +324,13 @@ def render_admin_panel():
         
         with c3:
             if selection != "➕ Crear Nuevo...":
-            # Construimos la URL relativa
                 link = f"/?eval={selection}"
-        
                 st.code(link, language="text")
-        
-                # Este botón abrirá automáticamente en una pestaña nueva
                 st.link_button("Previsualizar Examen", link)
 
+    # --------------------------------------------------------------------------
+    # PESTAÑA 2: TABLA DE NOTAS
+    # --------------------------------------------------------------------------
     with tab_grades:
         if st.button("Refrescar Tabla"):
             st.rerun()
@@ -347,6 +354,78 @@ def render_admin_panel():
             st.download_button("📥 Descargar CSV", csv, "notas_ve.csv", "text/csv")
         else:
             st.info("No hay registros aún.")
+
+    # --------------------------------------------------------------------------
+    # PESTAÑA 3: DASHBOARD DOCENTE (NUEVO)
+    # --------------------------------------------------------------------------
+    with tab_dashboard:
+        st.subheader("Análisis de Resultados",divider=True)
+        
+        df = db_manager.get_all_grades()
+        
+        if df.empty:
+            st.info("No hay suficientes datos para mostrar el dashboard.")
+        else:
+            # Filtro global del Dashboard
+            lista_examenes = list(df['exam_id'].unique())
+            seleccion_dash = st.selectbox("Seleccionar Examen para Análisis", ["Todos"] + lista_examenes)
+            
+            # Filtrar Dataframe
+            if seleccion_dash != "Todos":
+                df_view = df[df['exam_id'] == seleccion_dash].copy()
+            else:
+                df_view = df.copy()
+
+            # Asegurar tipos de datos para gráficos
+            df_view['score'] = pd.to_numeric(df_view['score'])
+            df_view['attempts'] = pd.to_numeric(df_view['attempts'])
+            df_view['last_updated'] = pd.to_datetime(df_view['last_updated'])
+
+            # --- ROW 1: KPIs ---
+            k1, k2, k3, k4 = st.columns(4)
+            
+            total_est = len(df_view)
+            promedio_nota = df_view['score'].mean()
+            tasa_aprobacion = (df_view['is_correct'].sum() / total_est) if total_est > 0 else 0
+            promedio_intentos = df_view['attempts'].mean()
+
+            k1.metric("Estudiantes", total_est, border=True)
+            k2.metric("Nota Promedio", f"{promedio_nota:.2f}", border=True)
+            k3.metric("Tasa Aprobación", f"{tasa_aprobacion:.1%}", border=True)
+            k4.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
+
+            st.divider()
+
+            # --- ROW 2: Gráficos Principales ---
+            col_g1, col_g2 = st.columns(2)
+
+            with col_g1:
+                st.markdown("**Distribución de Notas.**")
+                # Redondeamos notas para agrupar mejor en el gráfico de barras
+                notas_redondeadas = df_view['score'].round(0).astype(int)
+                conteo_notas = notas_redondeadas.value_counts().sort_index()
+                st.bar_chart(conteo_notas, color="#4CAF50")
+                st.caption("Eje X: Nota (0-20) | Eje Y: Cantidad de Alumnos")
+
+            with col_g2:
+                st.markdown("**Dificultad (Nota vs Intentos)**")
+                # Scatter chart simple usando Streamlit
+                # Renombramos columnas para que el gráfico se entienda solo
+                chart_data = df_view[['attempts', 'score']].rename(columns={'attempts': 'Intentos', 'score': 'Nota'})
+                st.scatter_chart(chart_data, x='Intentos', y='Nota', color="#FF5722")
+                st.caption("Más a la derecha, necesitaron más intentos.")
+
+            # --- ROW 3: Evolución Temporal ---
+            st.divider()
+            st.markdown("**Actividad Reciente (Envíos)**")
+            
+            # Agrupar por hora o día
+            # Creamos una columna temporal solo para graficar
+            df_view['fecha_hora'] = df_view['last_updated'].dt.floor('D') # Agrupar por hora
+            actividad = df_view.groupby('fecha_hora').size()
+            
+            st.line_chart(actividad)
+            st.caption("Cantidad de exámenes completados por día.")
 
 # ==============================================================================
 # 4. ENRUTADOR PRINCIPAL
