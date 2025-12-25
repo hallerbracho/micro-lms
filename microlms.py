@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import random
 from datetime import datetime, timedelta, timezone  # <--- SE AGREGARON LIBRERÍAS DE TIEMPO
+import types
 
 # ==============================================================================
 # 1. CONFIGURACIÓN Y ESTILOS
@@ -243,6 +244,66 @@ def execute_exam(exam_id):
         with st.expander("Detalles para el profesor"):
             st.code(str(e))
 
+
+
+# ==============================================================================
+# CLASES AUXILIARES PARA EL SOLUCIONADOR (Agregar antes de render_admin_panel)
+# ==============================================================================
+
+# ==============================================================================
+# CLASES AUXILIARES (Actualizar esta sección al inicio del script)
+# ==============================================================================
+
+class SilentStreamlit:
+    """Simula ser 'st' para ejecutar el examen sin interfaz gráfica."""
+    def __init__(self, fixed_input):
+        self.fixed_input = str(fixed_input)
+        self.secrets = st.secrets
+        self.session_state = {} 
+
+    def text_input(self, label, **kwargs):
+        return self.fixed_input
+    
+    def number_input(self, label, **kwargs):
+        return 0 
+        
+    def columns(self, spec, **kwargs):
+        # CORRECCIÓN: Detectar si 'spec' es un entero o una lista [1, 2]
+        count = spec if isinstance(spec, int) else len(spec)
+        return [self] * count
+        
+    def tabs(self, tabs_list, **kwargs):
+        return [self] * len(tabs_list)
+
+    def stop(self):
+        pass
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+    def __iter__(self):
+        # Permite iterar sobre columnas si el código hace: for col in st.columns(2):
+        yield self
+
+    def __getattr__(self, name):
+        # Atrapa cualquier otro método (latex, map, image, etc) y no hace nada
+        return lambda *args, **kwargs: self
+        
+
+class MockDB:
+    """Simula la BD para forzar que el examen se ejecute (ignora si ya aprobó)."""
+    def check_student_status(self, exam_id, student_id):
+        # Siempre dice que NO ha aprobado para que el código calcule la solución
+        return {"has_passed": False, "score": 0}
+        
+    def register_attempt(self, *args, **kwargs):
+        return 0, 0
+
+
+
 # ==============================================================================
 # REEMPLAZAR LA FUNCIÓN render_admin_panel COMPLETA CON ESTA VERSIÓN
 # ==============================================================================
@@ -270,7 +331,8 @@ def render_admin_panel():
         st.rerun()
 
     # --- AHORA SON 3 PESTAÑAS ---
-    tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
+    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Libro de Notas", "Editor", " Respuestas"])
+    #tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
 
     # --------------------------------------------------------------------------
     # PESTAÑA 1: EDITOR
@@ -385,14 +447,26 @@ def render_admin_panel():
             k1, k2, k3, k4 = st.columns(4)
             
             total_est = len(df_view)
-            promedio_nota = df_view['score'].mean()
-            tasa_aprobacion = (df_view['is_correct'].sum() / total_est) if total_est > 0 else 0
-            promedio_intentos = df_view['attempts'].mean()
+            
+            # FILTRO: Separamos solo a los aprobados para el cálculo de nota promedio
+            df_aprobados = df_view[df_view['is_correct'] == True]
+            
+            # MODIFICACIÓN: El promedio ahora se basa solo en df_aprobados
+            if not df_aprobados.empty:
+                promedio_nota = df_aprobados['score'].mean()
+            else:
+                promedio_nota = 0
+            
+            # La tasa de aprobación DEBE compararse contra el total de estudiantes
+            tasa_aprobacion = (len(df_aprobados) / total_est) if total_est > 0 else 0
+            
+            # El promedio de intentos también puede ser interesante verlo solo para los que lo lograron
+            promedio_intentos = df_aprobados['attempts'].mean() if not df_aprobados.empty else 0
 
-            k1.metric("Estudiantes", total_est, border=True)
-            k2.metric("Nota Promedio", f"{promedio_nota:.2f}", border=True)
+            k1.metric("Total de registros", total_est, border=True)
+            k2.metric("Nota Promedio", f"{promedio_nota:.2f}", border=True) # Promedio aprobados
             k3.metric("Tasa Aprobación", f"{tasa_aprobacion:.1%}", border=True)
-            k4.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
+            k4.metric("Intentos para aprobar", f"{promedio_intentos:.1f}", border=True)
 
             st.divider()
 
@@ -426,6 +500,106 @@ def render_admin_panel():
             
             st.line_chart(actividad)
             st.caption("Cantidad de exámenes completados por día.")
+            
+    # --------------------------------------------------------------------------
+    # PESTAÑA 4: RESPUESTAS (NUEVA FUNCIONALIDAD)
+    # --------------------------------------------------------------------------
+    with tab_solver:
+        st.subheader("Simulador de Soluciones", divider=True)
+        st.info("Esta herramienta revela todas las variables generadas por el examen para una cédula específica.")
+        
+        c_sol1, c_sol2 = st.columns(2)
+        
+        with c_sol1:
+            exam_to_solve = st.selectbox("Elegir Examen", db_manager.get_exam_list(), key="solver_select")
+        
+        with c_sol2:
+            student_target = st.text_input("Cédula / ID Estudiante", key="solver_input")
+            
+        if st.button("🔍 Calcular Solución", type="primary"):
+            if not exam_to_solve or not student_target:
+                st.error("Seleccione un examen e ingrese una cédula.")
+            else:
+                raw_code = db_manager.get_exam_code(exam_to_solve)
+                
+                if not raw_code:
+                    st.error("El código del examen está vacío.")
+                else:
+                    # 1. Sanitización (Quitar imports de streamlit)
+                    lines = raw_code.split('\n')
+                    safe_lines = [
+                        line for line in lines 
+                        if not line.strip().startswith("import streamlit") 
+                        and not line.strip().startswith("from streamlit")
+                    ]
+                    cleaned_code = "\n".join(safe_lines)
+
+                    # 2. Preparar entorno
+                    silent_st = SilentStreamlit(student_target)
+                    mock_db = MockDB()
+                    
+                    # Contexto inicial (variables que inyectamos nosotros)
+                    base_context_keys = {
+                        'st', 'pd', 'np', 'random', 'db', 'EXAM_ID', 'datetime', 
+                        'is_admin', '__builtins__'
+                    }
+                    
+                    context_solver = {
+                        'st': silent_st,
+                        'pd': pd,
+                        'np': np,
+                        'random': random,
+                        'db': mock_db,
+                        'EXAM_ID': exam_to_solve,
+                        'datetime': datetime,
+                        'is_admin': True
+                    }
+                    
+                    try:
+                        # 3. Ejecutar
+                        exec(cleaned_code, context_solver)
+                        
+                        st.divider()
+                        st.markdown(f"#### Variables encontradas para: `{student_target}`")
+                        
+                        # 4. Busqueda Prioritaria (Variables de respuesta común)
+                        priority_vars = ['solucion', 'solution', 'respuesta', 'result', 'answer']
+                        found_priority = False
+                        
+                        for var in priority_vars:
+                            if var in context_solver:
+                                val = context_solver[var]
+                                st.success(f"🎯 **{var}**: {val}")
+                                found_priority = True
+                        
+                        if not found_priority:
+                            st.caption("Mostrando todas las variables generadas:")
+
+                        # 5. Filtrado Inteligente de Variables (Muestra TODO lo que no sea basura)
+                        results_found = {}
+                        for k, v in context_solver.items():
+                            # Ignorar variables internas (_) o las que inyectamos nosotros
+                            if k.startswith('_') or k in base_context_keys:
+                                continue
+                            
+                            # Ignorar Módulos, Funciones y Clases (solo queremos datos)
+                            if isinstance(v, (types.ModuleType, types.FunctionType, type)):
+                                continue
+                                
+                            results_found[k] = v
+
+                        # Mostrar resultado limpio en JSON/Diccionario
+                        if results_found:
+                            st.json(results_found)
+                        else:
+                            st.warning("El script se ejecutó pero no generó variables nuevas visibles.")
+                            
+                    except Exception as e:
+                        st.error("Error ejecutando la simulación:")
+                        st.error(str(e))
+                        with st.expander("Ver código ejecutado"):
+                            st.code(cleaned_code)
+                        
 
 # ==============================================================================
 # 4. ENRUTADOR PRINCIPAL
