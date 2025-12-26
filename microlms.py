@@ -436,85 +436,123 @@ def render_admin_panel():
     # PESTAÑA 3: DASHBOARD DOCENTE (NUEVO)
     # --------------------------------------------------------------------------
     with tab_dashboard:
-        st.subheader("Análisis de Resultados",divider=True)
+        st.subheader("Análisis de Resultados", divider=True)
         
         df = db_manager.get_all_grades()
         
         if df.empty:
             st.info("No hay suficientes datos para mostrar el dashboard.")
         else:
-            # Filtro global del Dashboard
+            # Filtro global
             lista_examenes = list(df['exam_id'].unique())
             seleccion_dash = st.selectbox("Seleccionar Examen para Análisis", ["Todos"] + lista_examenes)
             
-            # Filtrar Dataframe
             if seleccion_dash != "Todos":
                 df_view = df[df['exam_id'] == seleccion_dash].copy()
             else:
                 df_view = df.copy()
 
-            # Asegurar tipos de datos para gráficos
+            # Asegurar tipos
             df_view['score'] = pd.to_numeric(df_view['score'])
             df_view['attempts'] = pd.to_numeric(df_view['attempts'])
             df_view['last_updated'] = pd.to_datetime(df_view['last_updated'])
 
-            # --- ROW 1: KPIs ---
-            k1, k2, k3, k4 = st.columns(4)
+            # --- 1. CÁLCULOS DE POBLACIÓN (Set Theory) ---
+            # Obtenemos conjuntos (sets) de cédulas únicas
+            set_todos = set(df_view['student_id'])
+            set_aprobados = set(df_view[df_view['is_correct'] == True]['student_id'])
             
-            total_est = len(df_view)
+            # Lógica de resta de conjuntos: (Todos) - (Los que aprobaron alguna vez)
+            set_sin_aprobar = set_todos - set_aprobados
             
-            # FILTRO: Separamos solo a los aprobados para el cálculo de nota promedio
+            total_unicos = len(set_todos)
+            total_sin_aprobar = len(set_sin_aprobar)
+            total_registros = len(df_view)
+
+            # --- 2. CÁLCULOS DE RENDIMIENTO ---
             df_aprobados = df_view[df_view['is_correct'] == True]
             
-            # MODIFICACIÓN: El promedio ahora se basa solo en df_aprobados
             if not df_aprobados.empty:
                 promedio_nota = df_aprobados['score'].mean()
+                promedio_intentos = df_aprobados['attempts'].mean()
             else:
                 promedio_nota = 0
+                promedio_intentos = 0
             
-            # La tasa de aprobación DEBE compararse contra el total de estudiantes
-            tasa_aprobacion = (len(df_aprobados) / total_est) if total_est > 0 else 0
-            
-            # El promedio de intentos también puede ser interesante verlo solo para los que lo lograron
-            promedio_intentos = df_aprobados['attempts'].mean() if not df_aprobados.empty else 0
+            # Tasa sobre registros totales (visión de intentos) o sobre estudiantes (visión de éxito)
+            # Generalmente en educación se prefiere: % de estudiantes que lo lograron
+            tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
 
-            k1.metric("Total de registros", total_est, border=True)
-            k2.metric("Nota Promedio", f"{promedio_nota:.2f}", border=True) # Promedio aprobados
-            k3.metric("Tasa Aprobación", f"{tasa_aprobacion:.1%}", border=True)
-            k4.metric("Intentos para aprobar", f"{promedio_intentos:.1f}", border=True)
+
+            # --- VISUALIZACIÓN DE KPIs (Diseño 2 filas) ---
+            
+            # FILA 1: Población (Total Estudiantes vs Pendientes)
+            c1, c2 = st.columns(2)
+            
+            c1.metric(
+                label="Total Estudiantes Únicos", 
+                value=total_unicos, 
+                delta=f"{total_registros} intentos totales",
+                delta_color="off",
+                border=True,
+                help="Total de personas distintas que han intentado el examen."
+            )
+            
+            c2.metric(
+                label="Estudiantes Sin Aprobar", 
+                value=total_sin_aprobar,
+                delta=f"{len(set_aprobados)} ya aprobaron",
+                delta_color="inverse", # Rojo si sube (o visualmente destacado)
+                border=True,
+                help="Personas que han intentado el examen pero AÚN no tienen ningún registro aprobado."
+            )
+            
+            st.write("") # Espaciador pequeño
+
+            # FILA 2: Rendimiento (Tasa, Nota, Esfuerzo)
+            c3, c4, c5 = st.columns(3)
+            
+            c3.metric(
+                label="% Aprobación Real", 
+                value=f"{tasa_exito_real:.1%}", 
+                border=True,
+                help="% de estudiantes únicos que lograron aprobar."
+            )
+            
+            c4.metric(
+                label="Nota Promedio", 
+                value=f"{promedio_nota:.2f} pts", 
+                border=True,
+                help="Promedio calculado solo entre quienes aprobaron."
+            )
+
+            c5.metric(
+                label="Intentos Promedio", 
+                value=f"{promedio_intentos:.1f}", 
+                border=True,
+                help="Cantidad de intentos promedio necesarios para aprobar."
+            )
 
             st.divider()
 
-            # --- ROW 2: Gráficos Principales ---
+            # --- GRÁFICOS (Igual que antes) ---
             col_g1, col_g2 = st.columns(2)
 
             with col_g1:
-                st.markdown("**Distribución de Notas.**")
-                # Redondeamos notas para agrupar mejor en el gráfico de barras
-                notas_redondeadas = df_view['score'].round(0).astype(int)
-                conteo_notas = notas_redondeadas.value_counts().sort_index()
-                st.bar_chart(conteo_notas, color="#4CAF50")
-                st.caption("Eje X: Nota (0-20) | Eje Y: Cantidad de Alumnos")
+                st.markdown("**Distribución de Notas (Aprobados)**")
+                if not df_aprobados.empty:
+                    notas_redondeadas = df_aprobados['score'].round(0).astype(int)
+                    conteo_notas = notas_redondeadas.value_counts().sort_index()
+                    st.bar_chart(conteo_notas, color="#4CAF50")
+                else:
+                    st.caption("Sin datos.")
 
             with col_g2:
-                st.markdown("**Dificultad (Nota vs Intentos)**")
-                # Scatter chart simple usando Streamlit
-                # Renombramos columnas para que el gráfico se entienda solo
-                chart_data = df_view[['attempts', 'score']].rename(columns={'attempts': 'Intentos', 'score': 'Nota'})
-                st.scatter_chart(chart_data, x='Intentos', y='Nota', color="#FF5722")
-                st.caption("Más a la derecha, necesitaron más intentos.")
-
-            # --- ROW 3: Evolución Temporal ---
-            st.divider()
-            st.markdown("**Actividad Reciente (Envíos)**")
-            
-            # Agrupar por hora o día
-            # Creamos una columna temporal solo para graficar
-            df_view['fecha_hora'] = df_view['last_updated'].dt.floor('D') # Agrupar por hora
-            actividad = df_view.groupby('fecha_hora').size()
-            
-            st.line_chart(actividad)
-            st.caption("Cantidad de exámenes completados por día.")
+                st.markdown("**Actividad Reciente**")
+                if not df_view.empty:
+                    df_view['fecha_dia'] = df_view['last_updated'].dt.date
+                    actividad = df_view.groupby('fecha_dia').size()
+                    st.line_chart(actividad)
             
     # --------------------------------------------------------------------------
     # PESTAÑA 4: RESPUESTAS (NUEVA FUNCIONALIDAD)
