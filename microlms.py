@@ -260,6 +260,16 @@ class SilentStreamlit:
         self.fixed_input = str(fixed_input)
         self.secrets = st.secrets
         self.session_state = {} 
+        
+    @property
+    def sidebar(self):
+        # Cuando el código pida 'st.sidebar', devolvemos 'self' 
+        # para que el 'with st.sidebar:' funcione (no hace nada, pero no da error).
+        return self
+        
+    def container(self):
+        # Cuando el código pida 'st.container()', también devolvemos 'self'
+        return self
 
     def text_input(self, label, **kwargs):
         return self.fixed_input
