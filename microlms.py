@@ -226,6 +226,10 @@ def execute_exam(exam_id):
     # Determinamos si es admin basándonos en la sesión actual
     is_admin_user = st.session_state.get('auth', False)
     
+    with st.sidebar:
+        
+        contenedor_teoria = st.container()        
+    
     context = {
         'st': st,
         'pd': pd,
@@ -234,7 +238,8 @@ def execute_exam(exam_id):
         'db': db_manager,
         'EXAM_ID': exam_id,
         'datetime': datetime,
-        'is_admin': is_admin_user  # <--- NUEVA VARIABLE INYECTADA
+        'is_admin': is_admin_user,  # <--- NUEVA VARIABLE INYECTADA
+        'sidebar_area': contenedor_teoria
     }
     
     try:
