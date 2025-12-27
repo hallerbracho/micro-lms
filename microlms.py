@@ -445,12 +445,21 @@ def render_admin_panel():
         else:
             # Filtro global
             lista_examenes = list(df['exam_id'].unique())
-            seleccion_dash = st.selectbox("Seleccionar Examen para Análisis", ["Todos"] + lista_examenes)
             
-            if seleccion_dash != "Todos":
-                df_view = df[df['exam_id'] == seleccion_dash].copy()
+            # CAMBIO: Usamos multiselect en lugar de selectbox
+            seleccion_dash = st.multiselect(
+                "Seleccionar Exámenes para Análisis", 
+                lista_examenes,
+                default=lista_examenes  # Por defecto selecciona todos
+            )
+            
+            # Lógica de filtrado con .isin()
+            if seleccion_dash:
+                df_view = df[df['exam_id'].isin(seleccion_dash)].copy()
             else:
-                df_view = df.copy()
+                # Si el usuario desmarca todo, mostramos un DataFrame vacío o todo (según prefieras)
+                df_view = pd.DataFrame(columns=df.columns)
+                st.warning("Seleccione al menos un examen para ver estadísticas.")
 
             # Asegurar tipos
             df_view['score'] = pd.to_numeric(df_view['score'])
