@@ -351,7 +351,7 @@ def render_admin_panel():
             st.rerun()
 
     # --- AHORA SON 3 PESTAÑAS ---
-    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Libro de Notas", "Editor", " Respuestas"])
+    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Libro de calificaciones", "Editor de evaluaciones", " Respuestas"])
     #tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
 
     # --------------------------------------------------------------------------
@@ -453,18 +453,21 @@ def render_admin_panel():
         
         @st.fragment
         def render_dashboard_content():
-            col_title, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+            col_title, col_btn = st.columns([1, 3], vertical_alignment="bottom")
 
             with col_title:
                 # Quitamos 'divider=True' aquí para que la línea no se corte en la columna
-                st.subheader("Análisis de Resultados")
-
-            with col_btn:
+                #st.subheader("Análisis de Resultados")
                 if st.button("Actualizar métricas"):
                     pass 
 
+            with col_btn:
+                # Quitamos 'divider=True' aquí para que la línea no se corte en la columna
+                st.subheader("Análisis de Resultados")
+                
+
             # Agregamos la línea divisoria manualmente debajo de las columnas para que ocupe todo el ancho
-            #st.divider() 
+            # st.divider() 
             
             df = db_manager.get_all_grades()
             
