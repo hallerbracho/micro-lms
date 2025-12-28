@@ -458,8 +458,10 @@ def render_admin_panel():
                 df_view = df[df['exam_id'].isin(seleccion_dash)].copy()
             else:
                 # Si el usuario desmarca todo, mostramos un DataFrame vacío o todo (según prefieras)
-                df_view = pd.DataFrame(columns=df.columns)
-                st.warning("Seleccione al menos un examen para ver estadísticas.")
+                #df_view = pd.DataFrame(columns=df.columns)
+                df_view = df.copy()
+                st.info("Mostrando estadísticas globales (todos los exámenes).")
+                #st.warning("Seleccione al menos un examen para ver estadísticas.")
 
             # Asegurar tipos
             df_view['score'] = pd.to_numeric(df_view['score'])
