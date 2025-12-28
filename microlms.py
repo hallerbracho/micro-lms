@@ -460,7 +460,7 @@ def render_admin_panel():
                 # Si el usuario desmarca todo, mostramos un DataFrame vacío o todo (según prefieras)
                 #df_view = pd.DataFrame(columns=df.columns)
                 df_view = df.copy()
-                st.info("Mostrando estadísticas globales (todos los exámenes).")
+                #st.info("Mostrando estadísticas globales (todos los exámenes).")
                 #st.warning("Seleccione al menos un examen para ver estadísticas.")
 
             # Asegurar tipos
