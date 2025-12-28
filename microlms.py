@@ -516,7 +516,7 @@ def render_admin_panel():
                 label="Estudiantes Sin Aprobar", 
                 value=total_sin_aprobar,
                 delta=f"{len(set_aprobados)} ya aprobaron",
-                delta_color="normal", # Rojo si sube (o visualmente destacado)
+                #delta_color="normal", # Rojo si sube (o visualmente destacado)
                 border=True,
                 help="Personas que han intentado el examen pero AÚN no tienen ningún registro aprobado."
             )
