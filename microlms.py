@@ -324,9 +324,8 @@ class MockDB:
 # ==============================================================================
 
 def render_admin_panel():
-    st.header("Panel de Control Docente", divider=True)
-    
     if not st.session_state.get('auth'):
+        st.header("Panel de Control Docente", divider=True)
         pwd = st.text_input("Contraseña de Administrador", type="password")
         if st.button("Acceder", type="primary"):
             try:
@@ -339,11 +338,15 @@ def render_admin_panel():
                 st.error("Error: Configure ADMIN_PASSWORD en st.secrets")
         return
 
-    st.caption("Modo Administrador Activo (Hora VE)")
-    if st.button("Cerrar Sesión"):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+    # 2. MENU LATERAL (Sidebar) - Solo visible cuando es admin
+    with st.sidebar:
+        st.header("Panel de Control", divider=True)
+        st.caption("Modo Administrador Activo (Hora VE)")
+        
+        if st.button("Cerrar Sesión"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
 
     # --- AHORA SON 3 PESTAÑAS ---
     tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Libro de Notas", "Editor", " Respuestas"])
@@ -503,7 +506,7 @@ def render_admin_panel():
             c1.metric(
                 label="Total Estudiantes Únicos", 
                 value=total_unicos, 
-                delta=f"{total_registros} intentos totales",
+                delta=f"{total_registros} registros totales",
                 delta_color="off",
                 border=True,
                 help="Total de personas distintas que han intentado el examen."
