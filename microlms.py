@@ -373,7 +373,7 @@ def render_admin_panel():
             st.session_state['last_selection'] = selection
 
         if selection == "➕ Crear Nuevo...":
-            exam_id_input = st.text_input("ID del Examen (ej: parcial_1)", value=st.session_state.get('current_exam_id', ""))
+            exam_id_input = st.text_input("ID del Examen (ej: ex1-mn-sec-A-2026A)", value=st.session_state.get('current_exam_id', ""))
             st.session_state['current_exam_id'] = exam_id_input
         else:
             exam_id_input = selection
