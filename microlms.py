@@ -351,7 +351,7 @@ def render_admin_panel():
             st.rerun()
 
     # --- AHORA SON 3 PESTAÑAS ---
-    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Libro de calificaciones", "Editor de evaluaciones", " Respuestas"])
+    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Registro de calificaciones", "Editor de evaluaciones", " Respuestas"])
     #tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
 
     # --------------------------------------------------------------------------
