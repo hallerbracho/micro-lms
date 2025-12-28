@@ -76,15 +76,43 @@ if st.button("Enviar"):
 @st.cache_resource
 def get_db_connection():
     """
-    Crea una conexión persistente a Turso. 
+    Crea una conexión persistente a Turso e inicializa las tablas UNA SOLA VEZ.
     """
     url = st.secrets["TURSO_DB_URL"]
     token = st.secrets["TURSO_AUTH_TOKEN"]
-    return libsql.connect(database=url, auth_token=token)
+    conn = libsql.connect(database=url, auth_token=token)
+    
+    # --- BLOQUE MOVIDO: Se ejecuta solo la primera vez que arranca el servidor ---
+    # Tabla de Notas (Grades)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS grades (
+            exam_id TEXT,
+            student_id TEXT,
+            attempts INTEGER DEFAULT 0,
+            score REAL DEFAULT 0,
+            is_correct BOOLEAN DEFAULT 0,
+            last_updated TIMESTAMP,
+            PRIMARY KEY (exam_id, student_id)
+        )
+    """)
+    
+    # Tabla de Exámenes (Source Code Storage)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exams (
+            exam_id TEXT PRIMARY KEY,
+            source_code TEXT,
+            created_at TIMESTAMP
+        )
+    """)
+    conn.commit()
+    # -----------------------------------------------------------------------------
+    
+    return conn
 
 class DatabaseManager:
     def __init__(self):
-        self._init_db()
+        # Ya no hace falta inicializar la DB aquí, se hace en la conexión
+        pass
 
     def _get_conn(self):
         return get_db_connection()
@@ -94,32 +122,6 @@ class DatabaseManager:
         # Obtenemos UTC actual y restamos 4 horas
         ve_time = datetime.now(timezone.utc) - timedelta(hours=4)
         return ve_time.strftime('%Y-%m-%d %H:%M:%S')
-
-    def _init_db(self):
-        conn = self._get_conn()
-        
-        # Tabla de Notas (Grades)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS grades (
-                exam_id TEXT,
-                student_id TEXT,
-                attempts INTEGER DEFAULT 0,
-                score REAL DEFAULT 0,
-                is_correct BOOLEAN DEFAULT 0,
-                last_updated TIMESTAMP,
-                PRIMARY KEY (exam_id, student_id)
-            )
-        """)
-        
-        # Tabla de Exámenes (Source Code Storage)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS exams (
-                exam_id TEXT PRIMARY KEY,
-                source_code TEXT,
-                created_at TIMESTAMP
-            )
-        """)
-        conn.commit()
 
     # --- MÉTODOS DE ESTUDIANTE ---
     def check_student_status(self, exam_id: str, student_id: str):
@@ -412,61 +414,81 @@ def render_admin_panel():
     # PESTAÑA 2: TABLA DE NOTAS
     # --------------------------------------------------------------------------
     with tab_grades:
-        if st.button("Refrescar Tabla"):
-            st.rerun()
+        
+        @st.fragment
+        def render_grades_table():
+            # El botón por sí mismo dispara la re-ejecución de este fragmento
+            # No hace falta st.rerun(), ni lógica extra en el if.
+            st.button("Refrescar Tabla") 
             
-        df = db_manager.get_all_grades()
-        if not df.empty:
-            filtro_exam = st.multiselect("Filtrar por Examen", df['exam_id'].unique())
-            if filtro_exam:
-                df = df[df['exam_id'].isin(filtro_exam)]
+            # Siempre carga los datos frescos al ejecutarse el fragmento
+            df = db_manager.get_all_grades()
             
-            st.dataframe(
-                df, 
-                width='stretch',
-                column_config={
-                    "is_correct": st.column_config.CheckboxColumn("Aprobado"),
-                    "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f"),
-                    "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM HH:mm")
-                }
-            )
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar CSV", csv, "notas_ve.csv", "text/csv")
-        else:
-            st.info("No hay registros aún.")
+            if not df.empty:
+                filtro_exam = st.multiselect("Filtrar por Examen", df['exam_id'].unique())
+                if filtro_exam:
+                    df = df[df['exam_id'].isin(filtro_exam)]
+                
+                st.dataframe(
+                    df, 
+                    width='stretch',
+                    column_config={
+                        "is_correct": st.column_config.CheckboxColumn("Aprobado"),
+                        "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f"),
+                        "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM HH:mm")
+                    }
+                )
+                csv = df.to_csv(index=False).encode('utf-8')
+                st.download_button("📥 Descargar CSV", csv, "notas_ve.csv", "text/csv")
+            else:
+                st.info("No hay registros aún.")
+
+        # Llamamos a la función decorada
+        render_grades_table()
 
     # --------------------------------------------------------------------------
     # PESTAÑA 3: DASHBOARD DOCENTE (NUEVO)
     # --------------------------------------------------------------------------
     with tab_dashboard:
-        st.subheader("Análisis de Resultados", divider=True)
         
-        df = db_manager.get_all_grades()
-        
-        if df.empty:
-            st.info("No hay suficientes datos para mostrar el dashboard.")
-        else:
+        @st.fragment
+        def render_dashboard_content():
+            col_title, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+
+            with col_title:
+                # Quitamos 'divider=True' aquí para que la línea no se corte en la columna
+                st.subheader("Análisis de Resultados")
+
+            with col_btn:
+                if st.button("Actualizar métricas"):
+                    pass 
+
+            # Agregamos la línea divisoria manualmente debajo de las columnas para que ocupe todo el ancho
+            #st.divider() 
+            
+            df = db_manager.get_all_grades()
+            
+            if df.empty:
+                st.info("No hay suficientes datos para mostrar el dashboard.")
+                return # Salimos de la función si no hay datos
+
             # Filtro global
             lista_examenes = list(df['exam_id'].unique())
             
-            # CAMBIO: Usamos multiselect en lugar de selectbox
+            # Al interactuar con este multiselect, solo se recarga esta función (fragmento)
             seleccion_dash = st.multiselect(
                 "Seleccionar Exámenes para Análisis", 
                 lista_examenes,
-                default=lista_examenes  # Por defecto selecciona todos
+                default=None  # Por defecto selecciona todos
             )
             
             # Lógica de filtrado con .isin()
             if seleccion_dash:
                 df_view = df[df['exam_id'].isin(seleccion_dash)].copy()
             else:
-                # Si el usuario desmarca todo, mostramos un DataFrame vacío o todo (según prefieras)
-                #df_view = pd.DataFrame(columns=df.columns)
                 df_view = df.copy()
-                #st.info("Mostrando estadísticas globales (todos los exámenes).")
-                #st.warning("Seleccione al menos un examen para ver estadísticas.")
 
-            # Asegurar tipos
+            # Asegurar tipos de datos para cálculos
             df_view['score'] = pd.to_numeric(df_view['score'])
             df_view['attempts'] = pd.to_numeric(df_view['attempts'])
             df_view['last_updated'] = pd.to_datetime(df_view['last_updated'])
@@ -493,14 +515,12 @@ def render_admin_panel():
                 promedio_nota = 0
                 promedio_intentos = 0
             
-            # Tasa sobre registros totales (visión de intentos) o sobre estudiantes (visión de éxito)
-            # Generalmente en educación se prefiere: % de estudiantes que lo lograron
+            # Tasa sobre estudiantes únicos
             tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
 
-
-            # --- VISUALIZACIÓN DE KPIs (Diseño 2 filas) ---
+            # --- VISUALIZACIÓN DE KPIs ---
             
-            # FILA 1: Población (Total Estudiantes vs Pendientes)
+            # FILA 1: Población
             c1, c2 = st.columns(2)
             
             c1.metric(
@@ -516,14 +536,13 @@ def render_admin_panel():
                 label="Estudiantes Sin Aprobar", 
                 value=total_sin_aprobar,
                 delta=f"{len(set_aprobados)} ya aprobaron",
-                #delta_color="normal", # Rojo si sube (o visualmente destacado)
                 border=True,
                 help="Personas que han intentado el examen pero AÚN no tienen ningún registro aprobado."
             )
             
-            st.write("") # Espaciador pequeño
+            st.write("") # Espaciador
 
-            # FILA 2: Rendimiento (Tasa, Nota, Esfuerzo)
+            # FILA 2: Rendimiento
             c3, c4, c5 = st.columns(3)
             
             c3.metric(
@@ -549,7 +568,7 @@ def render_admin_panel():
 
             st.divider()
 
-            # --- GRÁFICOS (Igual que antes) ---
+            # --- GRÁFICOS ---
             col_g1, col_g2 = st.columns(2)
 
             with col_g1:
@@ -567,26 +586,35 @@ def render_admin_panel():
                     df_view['fecha_dia'] = df_view['last_updated'].dt.date
                     actividad = df_view.groupby('fecha_dia').size()
                     st.line_chart(actividad)
+
+        # Ejecutamos la función decorada
+        render_dashboard_content()
             
     # --------------------------------------------------------------------------
     # PESTAÑA 4: RESPUESTAS (NUEVA FUNCIONALIDAD)
     # --------------------------------------------------------------------------
     with tab_solver:
-        st.subheader("Simulador de Soluciones", divider=True)
-        st.info("Esta herramienta revela todas las variables generadas por el examen para una cédula específica.")
         
-        c_sol1, c_sol2 = st.columns(2)
-        
-        with c_sol1:
-            exam_to_solve = st.selectbox("Elegir Examen", db_manager.get_exam_list(), key="solver_select")
-        
-        with c_sol2:
-            student_target = st.text_input("Cédula / ID Estudiante", key="solver_input")
+        @st.fragment
+        def render_solver_content():
+            st.subheader("Simulador de Soluciones", divider=True)
+            st.info("Esta herramienta revela todas las variables generadas por el examen para una cédula específica.")
             
-        if st.button("🔍 Calcular Solución", type="primary"):
-            if not exam_to_solve or not student_target:
-                st.error("Seleccione un examen e ingrese una cédula.")
-            else:
+            c_sol1, c_sol2 = st.columns(2)
+            
+            with c_sol1:
+                # Al cambiar el examen, solo recarga este fragmento
+                exam_to_solve = st.selectbox("Elegir Examen", db_manager.get_exam_list(), key="solver_select")
+            
+            with c_sol2:
+                # Al escribir la cédula, solo recarga este fragmento
+                student_target = st.text_input("Cédula / ID Estudiante", key="solver_input")
+                
+            if st.button("🔍 Calcular Solución", type="primary"):
+                if not exam_to_solve or not student_target:
+                    st.error("Seleccione un examen e ingrese una cédula.")
+                    return # Salimos de la función sin error global
+
                 raw_code = db_manager.get_exam_code(exam_to_solve)
                 
                 if not raw_code:
@@ -601,7 +629,7 @@ def render_admin_panel():
                     ]
                     cleaned_code = "\n".join(safe_lines)
 
-                    # 2. Preparar entorno
+                    # 2. Preparar entorno (Simulamos ST y DB)
                     silent_st = SilentStreamlit(student_target)
                     mock_db = MockDB()
                     
@@ -666,6 +694,9 @@ def render_admin_panel():
                         st.error(str(e))
                         with st.expander("Ver código ejecutado"):
                             st.code(cleaned_code)
+
+        # Ejecutar el fragmento
+        render_solver_content()
                         
 
 # ==============================================================================
