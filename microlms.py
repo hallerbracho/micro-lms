@@ -385,33 +385,10 @@ def render_admin_panel():
         else:
             exam_id_input = selection
             st.info(f"Editando examen: **{exam_id_input}**")
-
-        # === INICIO MODIFICACIÓN EDITOR ===
-        try:
-            from streamlit_ace import st_ace
             
-            # Recuperamos el contenido que cargó la lógica de selección de examen
-            content_val = st.session_state.get('editor_area', "")
+        new_code = st.text_area("Código Python", height=450, key="editor_area")
 
-            # Renderizamos el editor profesional
-            new_code = st_ace(
-                value=content_val,
-                language="python",       # Reconoce sintaxis Python
-                theme="monokai",         # Tema oscuro (tipo VS Code)
-                font_size=13,            # Fuente ajustada (puedes bajar a 12 o 13)
-                height=450,
-                key="ace_editor_input",  # Key interna única
-                auto_update=True         # Actualiza mientras escribes
-            )
-            
-            # Actualizamos la variable de estado principal con lo que se escribe en el editor
-            st.session_state['editor_area'] = new_code
-
-        except ImportError:
-            # Fallback por si no se ha instalado la librería
-            st.warning("⚠️ Instala 'pip install streamlit-ace' para ver colores en el código.")
-            new_code = st.text_area("Código Python", height=450, key="editor_area")
-        # === FIN MODIFICACIÓN EDITOR ===
+        
 
         c1, c2, c3 = st.columns([1, 1, 2])
         
