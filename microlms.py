@@ -19,9 +19,9 @@ ST_STYLE = """
     textarea { font-family: 'Courier New', Courier, monospace !important; background-color: #f8f9fa !important; }
     .stButton>button { border-radius: 4px; border: 1px solid #ccc; width: 100%; }
     .stButton>button:hover { border-color: #333; color: #333; }
-
+    
     section[data-testid="stSidebar"] {
-            width: 435px !important; # Set the width to your desired value 
+            width: 430px !important; # Set the width to your desired value 
         }
         
 </style>
@@ -386,7 +386,32 @@ def render_admin_panel():
             exam_id_input = selection
             st.info(f"Editando examen: **{exam_id_input}**")
 
-        new_code = st.text_area("Código Python", height=450, key="editor_area")
+        # === INICIO MODIFICACIÓN EDITOR ===
+        try:
+            from streamlit_ace import st_ace
+            
+            # Recuperamos el contenido que cargó la lógica de selección de examen
+            content_val = st.session_state.get('editor_area', "")
+
+            # Renderizamos el editor profesional
+            new_code = st_ace(
+                value=content_val,
+                language="python",       # Reconoce sintaxis Python
+                theme="monokai",         # Tema oscuro (tipo VS Code)
+                font_size=14,            # Fuente ajustada (puedes bajar a 12 o 13)
+                height=450,
+                key="ace_editor_input",  # Key interna única
+                auto_update=True         # Actualiza mientras escribes
+            )
+            
+            # Actualizamos la variable de estado principal con lo que se escribe en el editor
+            st.session_state['editor_area'] = new_code
+
+        except ImportError:
+            # Fallback por si no se ha instalado la librería
+            st.warning("⚠️ Instala 'pip install streamlit-ace' para ver colores en el código.")
+            new_code = st.text_area("Código Python", height=450, key="editor_area")
+        # === FIN MODIFICACIÓN EDITOR ===
 
         c1, c2, c3 = st.columns([1, 1, 2])
         
@@ -422,15 +447,45 @@ def render_admin_panel():
         
         @st.fragment
         def render_grades_table():
-            # El botón por sí mismo dispara la re-ejecución de este fragmento
-            # No hace falta st.rerun(), ni lógica extra en el if.
-            st.button("Refrescar Tabla") 
-            
-            # Siempre carga los datos frescos al ejecutarse el fragmento
+            # 1. Cargar datos
             df = db_manager.get_all_grades()
             
+            # 2. Preparar el CSV con la data completa antes de renderizar botones
+            # (Nota: Descarga la data completa, independiente del filtro visual)
+            csv_data = df.to_csv(index=False).encode('utf-8') if not df.empty else None
+
+            # 3. Layout de 3 columnas: [Refrescar] [CSV] [Filtro]
+            # Ajustamos los anchos: Botón texto (1.5), Botón icono (0.5), Filtro (4)
+            c_refresh, c_csv, c_filter = st.columns([1.4, 0.6, 4], vertical_alignment="top")
+            
+            with c_refresh:
+                st.button("Refrescar Tabla", use_container_width=True)
+            
+            with c_csv:
+                if csv_data:
+                    st.download_button(
+                        label="📥",
+                        data=csv_data,
+                        file_name="notas_ve.csv",
+                        mime="text/csv",
+                        help="Descargar todo en CSV",
+                        use_container_width=True
+                    )
+            
+            with c_filter:
+                if not df.empty:
+                    filtro_exam = st.multiselect(
+                        "Filtrar por Examen", 
+                        df['exam_id'].unique(), 
+                        label_visibility="collapsed", 
+                        placeholder="Filtrar por examen..."
+                    )
+                else:
+                    filtro_exam = []
+
+            # 4. Renderizado de la tabla
             if not df.empty:
-                filtro_exam = st.multiselect("Filtrar por Examen", df['exam_id'].unique())
+                # Aplicamos el filtro solo visualmente a la tabla
                 if filtro_exam:
                     df = df[df['exam_id'].isin(filtro_exam)]
                 
@@ -443,8 +498,6 @@ def render_admin_panel():
                         "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM HH:mm")
                     }
                 )
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Descargar CSV", csv, "notas_ve.csv", "text/csv")
             else:
                 st.info("No hay registros aún.")
 
@@ -458,39 +511,35 @@ def render_admin_panel():
         
         @st.fragment
         def render_dashboard_content():
-            col_title, col_btn = st.columns([1, 3], vertical_alignment="bottom")
-
-            with col_title:
-                # Quitamos 'divider=True' aquí para que la línea no se corte en la columna
-                #st.subheader("Análisis de Resultados")
-                if st.button("Actualizar métricas"):
-                    pass 
-
-            with col_btn:
-                # Quitamos 'divider=True' aquí para que la línea no se corte en la columna
-                st.subheader("Análisis de Resultados")
-                
-
-            # Agregamos la línea divisoria manualmente debajo de las columnas para que ocupe todo el ancho
-            # st.divider() 
-            
+            # 1. Cargar datos PRIMERO para poder llenar el selector
             df = db_manager.get_all_grades()
             
             if df.empty:
                 st.info("No hay suficientes datos para mostrar el dashboard.")
-                return # Salimos de la función si no hay datos
+                if st.button("Reintentar"): st.rerun()
+                return 
 
-            # Filtro global
-            lista_examenes = list(df['exam_id'].unique())
+            # 2. Configuración del Header (Botón + Selector en la misma fila)
+            # Usamos vertical_alignment="bottom" para alinear el botón con el input
+            c_btn, c_sel = st.columns([1, 3], vertical_alignment="bottom")
+
+            with c_btn:
+                if st.button("Actualizar métricas"):
+                    pass 
+
+            with c_sel:
+                lista_examenes = list(df['exam_id'].unique())
+                seleccion_dash = st.multiselect(
+                    "Filtrar Dashboard", 
+                    lista_examenes,
+                    default=None,
+                    placeholder="Seleccionar Exámenes para Análisis...",
+                    label_visibility="collapsed"  # Ocultamos la etiqueta para que quede limpio
+                )
             
-            # Al interactuar con este multiselect, solo se recarga esta función (fragmento)
-            seleccion_dash = st.multiselect(
-                "Seleccionar Exámenes para Análisis", 
-                lista_examenes,
-                default=None  # Por defecto selecciona todos
-            )
+            #st.divider() 
             
-            # Lógica de filtrado con .isin()
+            # --- LÓGICA DE FILTRADO ---
             if seleccion_dash:
                 df_view = df[df['exam_id'].isin(seleccion_dash)].copy()
             else:
@@ -502,11 +551,8 @@ def render_admin_panel():
             df_view['last_updated'] = pd.to_datetime(df_view['last_updated'])
 
             # --- 1. CÁLCULOS DE POBLACIÓN (Set Theory) ---
-            # Obtenemos conjuntos (sets) de cédulas únicas
             set_todos = set(df_view['student_id'])
             set_aprobados = set(df_view[df_view['is_correct'] == True]['student_id'])
-            
-            # Lógica de resta de conjuntos: (Todos) - (Los que aprobaron alguna vez)
             set_sin_aprobar = set_todos - set_aprobados
             
             total_unicos = len(set_todos)
@@ -523,62 +569,24 @@ def render_admin_panel():
                 promedio_nota = 0
                 promedio_intentos = 0
             
-            # Tasa sobre estudiantes únicos
             tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
 
             # --- VISUALIZACIÓN DE KPIs ---
-            
-            # FILA 1: Población
             c1, c2 = st.columns(2)
-            
-            c1.metric(
-                label="Total Estudiantes Únicos", 
-                value=total_unicos, 
-                delta=f"{total_registros} registros totales",
-                delta_color="off",
-                border=True,
-                help="Total de personas distintas que han intentado el examen."
-            )
-            
-            c2.metric(
-                label="Estudiantes Sin Aprobar", 
-                value=total_sin_aprobar,
-                delta=f"{len(set_aprobados)} ya aprobaron",
-                border=True,
-                help="Personas que han intentado el examen pero AÚN no tienen ningún registro aprobado."
-            )
+            c1.metric("Total Estudiantes Únicos", total_unicos, delta=f"{total_registros} registros totales", delta_color="off", border=True)
+            c2.metric("Estudiantes Sin Aprobar", total_sin_aprobar, delta=f"{len(set_aprobados)} ya aprobaron", border=True)
             
             st.write("") # Espaciador
 
-            # FILA 2: Rendimiento
             c3, c4, c5 = st.columns(3)
-            
-            c3.metric(
-                label="% Aprobación Real", 
-                value=f"{tasa_exito_real:.1%}", 
-                border=True,
-                help="% de estudiantes únicos que lograron aprobar."
-            )
-            
-            c4.metric(
-                label="Nota Promedio", 
-                value=f"{promedio_nota:.2f} pts", 
-                border=True,
-                help="Promedio calculado solo entre quienes aprobaron."
-            )
+            c3.metric("% Aprobación Real", f"{tasa_exito_real:.1%}", border=True)
+            c4.metric("Nota Promedio", f"{promedio_nota:.2f} pts", border=True)
+            c5.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
 
-            c5.metric(
-                label="Intentos Promedio", 
-                value=f"{promedio_intentos:.1f}", 
-                border=True,
-                help="Cantidad de intentos promedio necesarios para aprobar."
-            )
-
-            st.divider()
+            #st.divider()
 
             # --- GRÁFICOS ---
             col_g1, col_g2 = st.columns(2)
-
             with col_g1:
                 st.markdown("**Distribución de Notas (Aprobados)**")
                 if not df_aprobados.empty:
