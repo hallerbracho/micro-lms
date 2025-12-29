@@ -16,7 +16,16 @@ ST_STYLE = """
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     .stApp { background-color: #ffffff; color: #111111; }
-    textarea { font-family: 'Courier New', Courier, monospace !important; background-color: #f8f9fa !important; }
+    
+    /* --- ESTILO TIPO IDE PARA EL TEXTAREA --- */
+    div[data-testid="stTextArea"] textarea { 
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important; 
+        font-size: 12px !important;  /* Fuente más pequeña */
+        line-height: 1.5 !important;
+        background-color: #1e1e1e !important; /* Fondo oscuro tipo VS Code */
+        color: #d4d4d4 !important; /* Texto claro */
+    }
+    
     .stButton>button { border-radius: 4px; border: 1px solid #ccc; width: 100%; }
     .stButton>button:hover { border-color: #333; color: #333; }
     
