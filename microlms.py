@@ -19,6 +19,11 @@ ST_STYLE = """
     textarea { font-family: 'Courier New', Courier, monospace !important; background-color: #f8f9fa !important; }
     .stButton>button { border-radius: 4px; border: 1px solid #ccc; width: 100%; }
     .stButton>button:hover { border-color: #333; color: #333; }
+
+    section[data-testid="stSidebar"] {
+            width: 380px !important; # Set the width to your desired value
+        }
+        
 </style>
 """
 st.markdown(ST_STYLE, unsafe_allow_html=True)
