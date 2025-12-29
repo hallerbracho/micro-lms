@@ -6,4 +6,3 @@ fpdf
 plotly
 extra-streamlit-components
 matplotlib
-streamlit-ace
