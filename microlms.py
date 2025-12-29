@@ -386,7 +386,49 @@ def render_admin_panel():
             exam_id_input = selection
             st.info(f"Editando examen: **{exam_id_input}**")
 
-        new_code = st.text_area("Código Python", height=450, key="editor_area")
+        # === INICIO MODIFICACIÓN EDITOR (VERSIÓN MODERNA) ===
+        try:
+            from code_editor import code_editor
+            
+            # Recuperamos el contenido previo
+            content_val = st.session_state.get('editor_area', "")
+
+            # Configuración de botones personalizados para el editor
+            # Esto crea una barra bonita arriba del editor
+            btn_settings = [{
+                "name": "copy",
+                "feather": "Copy",
+                "hasText": True,
+                "alwaysOn": True,
+                "commands": ["copyAll"],
+                "style": {"top": "0.46rem", "right": "0.4rem"}
+            }]
+
+            # Renderizamos el editor moderno
+            # response_dict será algo como: {'text': 'print("hola")', 'type': 'submit', ...}
+            response_dict = code_editor(
+                content_val,
+                lang="python",
+                height=[15, 30], # Altura mínima y máxima en líneas
+                theme="monokai",
+                buttons=btn_settings,
+                key="modern_editor"
+            )
+
+            # Extraemos el código limpio del diccionario de respuesta
+            if response_dict and 'text' in response_dict:
+                new_code = response_dict['text']
+            else:
+                new_code = content_val
+                
+            # Actualizamos el estado
+            st.session_state['editor_area'] = new_code
+
+        except ImportError:
+            # Fallback seguro
+            st.warning("⚠️ Instala 'pip install streamlit-code-editor' en requirements.txt")
+            new_code = st.text_area("Código Python", height=450, key="editor_area")
+        # === FIN MODIFICACIÓN EDITOR ===
 
         c1, c2, c3 = st.columns([1, 1, 2])
         
