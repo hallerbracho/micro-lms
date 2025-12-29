@@ -386,47 +386,30 @@ def render_admin_panel():
             exam_id_input = selection
             st.info(f"Editando examen: **{exam_id_input}**")
 
-        # === INICIO MODIFICACIÓN EDITOR (VERSIÓN MODERNA) ===
+        # === INICIO MODIFICACIÓN EDITOR ===
         try:
-            from code_editor import code_editor
+            from streamlit_ace import st_ace
             
-            # Recuperamos el contenido previo
+            # Recuperamos el contenido que cargó la lógica de selección de examen
             content_val = st.session_state.get('editor_area', "")
 
-            # Configuración de botones personalizados para el editor
-            # Esto crea una barra bonita arriba del editor
-            btn_settings = [{
-                "name": "copy",
-                "feather": "Copy",
-                "hasText": True,
-                "alwaysOn": True,
-                "commands": ["copyAll"],
-                "style": {"top": "0.46rem", "right": "0.4rem"}
-            }]
-
-            # Renderizamos el editor moderno
-            # response_dict será algo como: {'text': 'print("hola")', 'type': 'submit', ...}
-            response_dict = code_editor(
-                content_val,
-                lang="python",
-                height=[15, 30], # Altura mínima y máxima en líneas
-                theme="monokai",
-                buttons=btn_settings,
-                key="modern_editor"
+            # Renderizamos el editor profesional
+            new_code = st_ace(
+                value=content_val,
+                language="python",       # Reconoce sintaxis Python
+                theme="monokai",         # Tema oscuro (tipo VS Code)
+                font_size=13,            # Fuente ajustada (puedes bajar a 12 o 13)
+                height=450,
+                key="ace_editor_input",  # Key interna única
+                auto_update=True         # Actualiza mientras escribes
             )
-
-            # Extraemos el código limpio del diccionario de respuesta
-            if response_dict and 'text' in response_dict:
-                new_code = response_dict['text']
-            else:
-                new_code = content_val
-                
-            # Actualizamos el estado
+            
+            # Actualizamos la variable de estado principal con lo que se escribe en el editor
             st.session_state['editor_area'] = new_code
 
         except ImportError:
-            # Fallback seguro
-            st.warning("⚠️ Instala 'pip install streamlit-code-editor' en requirements.txt")
+            # Fallback por si no se ha instalado la librería
+            st.warning("⚠️ Instala 'pip install streamlit-ace' para ver colores en el código.")
             new_code = st.text_area("Código Python", height=450, key="editor_area")
         # === FIN MODIFICACIÓN EDITOR ===
 
