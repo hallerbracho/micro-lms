@@ -21,7 +21,7 @@ ST_STYLE = """
     .stButton>button:hover { border-color: #333; color: #333; }
 
     section[data-testid="stSidebar"] {
-            width: 430px !important; # Set the width to your desired value 
+            width: 435px !important; # Set the width to your desired value 
         }
         
 </style>
