@@ -1,2 +1,11 @@
 [theme]
 base = "light"
+
+[client]
+# Cambia el modo de la barra de herramientas a "minimal" o "viewer"
+# "minimal" oculta la mayoría de las opciones externas
+toolbarMode = "minimal"
+
+[ui]
+# Oculta la barra superior donde aparece el estado de "Running"
+hideTopBar = true
