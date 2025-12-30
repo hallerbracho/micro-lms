@@ -9,6 +9,7 @@ import types
 # ==============================================================================
 # 1. CONFIGURACIÓN Y ESTILOS
 # ==============================================================================
+#st.set_page_config(layout="wide", page_title="Plataforma de Evaluación", page_icon="🎓")
 st.set_page_config(layout="centered", page_title="Plataforma de Evaluación", page_icon="🎓")
 
 ST_STYLE = """
@@ -30,8 +31,14 @@ ST_STYLE = """
     .stButton>button:hover { border-color: #333; color: #333; }
     
     section[data-testid="stSidebar"] {
-            width: 430px !important; # Set the width to your desired value 
+            width: 410px !important; # Set the width to your desired value            
         }
+        
+    .block-container {
+        max-width: 800px !important; /* <--- AJUSTA ESTE VALOR (ej. 800px, 1000px, 60%) */
+        padding-top: 3rem !important;
+        padding-bottom: 3rem !important;
+    }
         
 </style>
 """
@@ -122,6 +129,11 @@ def get_db_connection():
     # -----------------------------------------------------------------------------
     
     return conn
+
+@st.cache_data(ttl=60)  # <--- Cachear por 1 minuto
+def get_cached_all_grades():
+    # Usamos el manager global
+    return db_manager.get_all_grades()
 
 class DatabaseManager:
     def __init__(self):
@@ -224,13 +236,25 @@ class DatabaseManager:
 
 db_manager = DatabaseManager()
 
+# --- INICIO NUEVO BLOQUE DE CACHÉ ---
+@st.cache_data(show_spinner=False, ttl=300) 
+def get_cached_exam_code(exam_id):
+    """
+    Recupera el código del examen y lo guarda en memoria por 5 minutos (300 seg).
+    Si 30 estudiantes entran a la vez, solo la primera petición va a la BD.
+    Las otras 29 se sirven instantáneamente desde la RAM.
+    """
+    return db_manager.get_exam_code(exam_id)
+# --- FIN NUEVO BLOQUE DE CACHÉ ---
+
 # ==============================================================================
 # 3. LÓGICA DE INTERFAZ (Admin vs Estudiante)
 # ==============================================================================
 
 def execute_exam(exam_id):
     """Carga el código desde BD y lo ejecuta en un entorno seguro"""
-    source_code = db_manager.get_exam_code(exam_id)
+    source_code = get_cached_exam_code(exam_id)
+    #source_code = db_manager.get_exam_code(exam_id)
     
     if not source_code:
         st.error("El examen solicitado no existe o no está disponible.")
@@ -395,11 +419,11 @@ def render_admin_panel():
             exam_id_input = selection
             st.info(f"Editando examen: **{exam_id_input}**")
             
-        new_code = st.text_area("Código Python", height=450, key="editor_area")
+        new_code = st.text_area("Código Python", height=350, key="editor_area")
 
         
 
-        c1, c2, c3 = st.columns([1, 1, 2])
+        c1, c2, c3 = st.columns([1, 1, 3])
         
         with c1:
             if st.button("Guardar", type="primary"):
@@ -408,22 +432,28 @@ def render_admin_panel():
                     st.error("Debe ingresar un ID para el examen")
                 else:
                     db_manager.save_exam(target_id, new_code)
+                    get_cached_exam_code.clear() 
                     st.success(f"¡Examen '{target_id}' guardado!")
                     st.session_state['last_selection'] = target_id
                     st.rerun()
 
         with c2:
             if selection != "➕ Crear Nuevo...":
-                if st.button("Eliminar"):
-                    db_manager.delete_exam(selection)
-                    st.toast("Examen eliminado")
-                    st.session_state['last_selection'] = None
-                    st.rerun()
+                # --- MODIFICACIÓN: Confirmación con Popover ---
+                with st.popover("Eliminar", help="Borrar este examen permanentemente"):
+                    st.markdown(f"¿Estás seguro de borrar **{selection}**?")
+                    st.warning("Esta acción no se puede deshacer.")
+                    
+                    if st.button("Sí, borrar definitivamente", type="primary"):
+                        db_manager.delete_exam(selection)
+                        st.toast(f"Examen '{selection}' eliminado correctamente", icon="🗑️")
+                        st.session_state['last_selection'] = None
+                        st.rerun()
         
         with c3:
             if selection != "➕ Crear Nuevo...":
                 link = f"/?eval={selection}"
-                st.code(link, language="text")
+                #st.code(link, language="text")
                 st.link_button("Previsualizar Examen", link)
 
     # --------------------------------------------------------------------------
@@ -434,7 +464,7 @@ def render_admin_panel():
         @st.fragment
         def render_grades_table():
             # 1. Cargar datos
-            df = db_manager.get_all_grades()
+            df = get_cached_all_grades()
             
             # 2. Preparar el CSV con la data completa antes de renderizar botones
             # (Nota: Descarga la data completa, independiente del filtro visual)
@@ -479,9 +509,9 @@ def render_admin_panel():
                     df, 
                     width='stretch',
                     column_config={
-                        "is_correct": st.column_config.CheckboxColumn("Aprobado"),
-                        "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f"),
-                        "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM HH:mm")
+                        "is_correct": st.column_config.CheckboxColumn("Aprobado", width="content"),
+                        "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f", width="content"),
+                        "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM/YYYY hh:mm a", width="content")
                     }
                 )
             else:
@@ -498,7 +528,7 @@ def render_admin_panel():
         @st.fragment
         def render_dashboard_content():
             # 1. Cargar datos PRIMERO para poder llenar el selector
-            df = db_manager.get_all_grades()
+            df = get_cached_all_grades()
             
             if df.empty:
                 st.info("No hay suficientes datos para mostrar el dashboard.")
