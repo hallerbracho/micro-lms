@@ -5,6 +5,7 @@ import numpy as np
 import random
 from datetime import datetime, timedelta, timezone  # <--- SE AGREGARON LIBRERÍAS DE TIEMPO
 import types
+import scipy
 
 # ==============================================================================
 # 1. CONFIGURACIÓN Y ESTILOS
