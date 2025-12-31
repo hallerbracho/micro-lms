@@ -531,12 +531,10 @@ def render_admin_panel():
             df = get_cached_all_grades()
             
             # 2. Preparar el CSV con la data completa antes de renderizar botones
-            # (Nota: Descarga la data completa, independiente del filtro visual)
             csv_data = df.to_csv(index=False).encode('utf-8') if not df.empty else None
 
-            # 3. Layout de 3 columnas: [Refrescar] [CSV] [Filtro]
-            # Ajustamos los anchos: Botón texto (1.5), Botón icono (0.5), Filtro (4)
-            c_refresh, c_csv, c_filter = st.columns([1.4, 0.6, 4], vertical_alignment="top")
+            # 3. Layout de 4 columnas: [Refrescar] [CSV] [Filtro Examen] [Filtro Cédula] <--- CAMBIO AQUÍ
+            c_refresh, c_csv, c_filter_exam, c_filter_id = st.columns([1.2, 0.6, 2.1, 2.1], vertical_alignment="top")
             
             with c_refresh:
                 st.button("Refrescar Tabla", use_container_width=True)
@@ -552,7 +550,7 @@ def render_admin_panel():
                         use_container_width=True
                     )
             
-            with c_filter:
+            with c_filter_exam:
                 if not df.empty:
                     filtro_exam = st.multiselect(
                         "Filtrar por Examen", 
@@ -563,11 +561,26 @@ def render_admin_panel():
                 else:
                     filtro_exam = []
 
+            # --- NUEVO BLOQUE PARA CÉDULA ---
+            with c_filter_id:
+                filtro_cedula = st.text_input(
+                    "Filtrar por Cédula", 
+                    placeholder="🔍 Buscar Cédula...", 
+                    label_visibility="collapsed"
+                )
+            # --------------------------------
+
             # 4. Renderizado de la tabla
             if not df.empty:
-                # Aplicamos el filtro solo visualmente a la tabla
+                # Aplicamos filtro de EXAMEN
                 if filtro_exam:
                     df = df[df['exam_id'].isin(filtro_exam)]
+                
+                # --- APLICAMOS FILTRO DE CÉDULA ---
+                if filtro_cedula:
+                    # Convierte a string y busca coincidencia parcial (case insensitive)
+                    df = df[df['student_id'].astype(str).str.contains(filtro_cedula, case=False, na=False)]
+                # ----------------------------------
                 
                 st.dataframe(
                     df, 
