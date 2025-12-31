@@ -300,40 +300,103 @@ def execute_exam(exam_id):
 # CLASES AUXILIARES (Actualizar esta sección al inicio del script)
 # ==============================================================================
 
+# ==============================================================================
+# REEMPLAZAR LA CLASE SilentStreamlit ANTIGUA POR ESTA VERSIÓN MEJORADA
+# ==============================================================================
+
 class SilentStreamlit:
-    """Simula ser 'st' para ejecutar el examen sin interfaz gráfica."""
+    """
+    Simula ser 'st' para ejecutar el examen sin interfaz gráfica.
+    Devuelve tipos de datos compatibles para evitar TypeErrors durante la simulación.
+    """
     def __init__(self, fixed_input):
         self.fixed_input = str(fixed_input)
         self.secrets = st.secrets
-        self.session_state = {} 
+        self.session_state = {}
         
+    # --- PROPIEDADES DE LAYOUT ---
     @property
     def sidebar(self):
-        # Cuando el código pida 'st.sidebar', devolvemos 'self' 
-        # para que el 'with st.sidebar:' funcione (no hace nada, pero no da error).
         return self
         
     def container(self):
-        # Cuando el código pida 'st.container()', también devolvemos 'self'
         return self
 
-    def text_input(self, label, **kwargs):
-        return self.fixed_input
-    
-    def number_input(self, label, **kwargs):
-        return 0 
-        
     def columns(self, spec, **kwargs):
-        # CORRECCIÓN: Detectar si 'spec' es un entero o una lista [1, 2]
         count = spec if isinstance(spec, int) else len(spec)
         return [self] * count
         
     def tabs(self, tabs_list, **kwargs):
         return [self] * len(tabs_list)
+        
+    def expander(self, label, **kwargs):
+        return self
+        
+    def form(self, key, **kwargs):
+        return self
 
+    # --- WIDGETS DE ENTRADA (Manejo de Tipos de Datos) ---
+
+    def text_input(self, label, **kwargs):
+        # Si el label sugiere que es el ID, devolvemos el ID fijo.
+        # Si no, devolvemos un string genérico para no romper comparaciones de texto.
+        label_lower = label.lower()
+        if "id" in label_lower or "cédula" in label_lower or "cedula" in label_lower:
+            return self.fixed_input
+        return "dummy_text_simulation"
+    
+    def number_input(self, label, **kwargs):
+        # Devolvemos 1.0 para evitar divisiones por cero si el script hace algun cálculo
+        return 1.0 
+    
+    def slider(self, label, min_value=0, max_value=100, **kwargs):
+        # Devolvemos el valor mínimo para ser seguros
+        return min_value
+
+    def radio(self, label, options, **kwargs):
+        # Devolvemos la PRIMERA opción disponible (evita errores de índice)
+        return options[0] if options else None
+
+    def selectbox(self, label, options, **kwargs):
+        # Igual que radio, devolvemos la primera opción
+        return options[0] if options else None
+        
+    def multiselect(self, label, options, **kwargs):
+        # Devolvemos una lista con el primer elemento (simula una selección válida)
+        return [options[0]] if options else []
+
+    def checkbox(self, label, **kwargs):
+        # Devolvemos False por defecto
+        return False
+
+    def date_input(self, label, **kwargs):
+        # Devolvemos la fecha de hoy para evitar errores con objetos datetime
+        from datetime import date
+        return date.today()
+
+    def time_input(self, label, **kwargs):
+        from datetime import datetime
+        return datetime.now().time()
+        
+    def file_uploader(self, label, **kwargs):
+        return None
+        
+    def form_submit_button(self, label="Submit", **kwargs):
+        # Simulamos que el botón SIEMPRE se presiona para que el código de validación corra
+        return True
+
+    # --- OTROS MÉTODOS ---
+    
     def stop(self):
         pass
     
+    def rerun(self):
+        pass
+        
+    def toast(self, *args, **kwargs):
+        pass
+
+    # Context Manager support (para 'with st.sidebar:', 'with st.form:', etc)
     def __enter__(self):
         return self
     
@@ -341,11 +404,11 @@ class SilentStreamlit:
         pass
 
     def __iter__(self):
-        # Permite iterar sobre columnas si el código hace: for col in st.columns(2):
         yield self
 
     def __getattr__(self, name):
-        # Atrapa cualquier otro método (latex, map, image, etc) y no hace nada
+        # Atrapa cualquier otro método visual (markdown, title, info, ballons, etc.)
+        # y no hace nada, devolviendo una función vacía que retorna self
         return lambda *args, **kwargs: self
         
 
