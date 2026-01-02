@@ -474,8 +474,13 @@ def render_admin_panel():
         exam_ids = db_manager.get_exam_list()
         options = ["➕ Crear Nuevo..."] + exam_ids
         
-        selection = st.selectbox("Seleccionar Examen", options)
+        # --- CAMBIO: Definimos 2 columnas (proporción 1 a 2) ---
+        col_sel, col_inp = st.columns([4, 5], vertical_alignment="bottom")
         
+        with col_sel:
+            selection = st.selectbox("Seleccionar Examen", options)
+        
+        # Lógica de actualización de estado (se mantiene igual, pero fuera de las cols visuales)
         if st.session_state.get('last_selection') != selection:
             if selection == "➕ Crear Nuevo...":
                 st.session_state['editor_area'] = DEFAULT_TEMPLATE
@@ -487,12 +492,13 @@ def render_admin_panel():
             
             st.session_state['last_selection'] = selection
 
-        if selection == "➕ Crear Nuevo...":
-            exam_id_input = st.text_input("ID del Examen (ej: ex1-mn-sec-A-2026A)", value=st.session_state.get('current_exam_id', ""))
-            st.session_state['current_exam_id'] = exam_id_input
-        else:
-            exam_id_input = selection
-            st.info(f"Editando examen: **{exam_id_input}**")
+        with col_inp:
+            if selection == "➕ Crear Nuevo...":
+                exam_id_input = st.text_input("ID del Examen (ej: ex1-mn-sec-A-2026A)", value=st.session_state.get('current_exam_id', ""))
+                st.session_state['current_exam_id'] = exam_id_input
+            else:
+                exam_id_input = selection
+                st.info(f"Editando examen: **{exam_id_input}**")
             
         new_code = st.text_area("Código Python", height=350, key="editor_area")
 
@@ -676,36 +682,44 @@ def render_admin_panel():
             tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
 
             # --- VISUALIZACIÓN DE KPIs ---
-            c1, c2 = st.columns(2)
-            c1.metric("Total Estudiantes Únicos", total_unicos, delta=f"{total_registros} registros totales", delta_color="off", border=True)
-            c2.metric("Estudiantes Sin Aprobar", total_sin_aprobar, delta=f"{len(set_aprobados)} ya aprobaron", border=True)
+            # ==================================================================
             
-            st.write("") # Espaciador
+            subtab_kpi, subtab_graphs = st.tabs(["📊 Métricas Clave", "📈 Gráficas Detalladas"])
 
-            c3, c4, c5 = st.columns(3)
-            c3.metric("% Aprobación Real", f"{tasa_exito_real:.1%}", border=True)
-            c4.metric("Nota Promedio", f"{promedio_nota:.2f} pts", border=True)
-            c5.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
+            # --- SUBPESTAÑA 1: KPIs ---
+            with subtab_kpi:
+                st.write("") # Espaciador
+                c1, c2 = st.columns(2)
+                c1.metric("Total Estudiantes Únicos", total_unicos, delta=f"{total_registros} registros totales", delta_color="off", border=True)
+                c2.metric("Estudiantes Sin Aprobar", total_sin_aprobar, delta=f"{len(set_aprobados)} ya aprobaron", border=True)
+                
+                st.write("") # Espaciador
 
-            #st.divider()
+                c3, c4, c5 = st.columns(3)
+                c3.metric("% Aprobación Real", f"{tasa_exito_real:.1%}", border=True)
+                c4.metric("Nota Promedio", f"{promedio_nota:.2f} pts", border=True)
+                c5.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
 
-            # --- GRÁFICOS ---
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                st.markdown("**Distribución de Notas (Aprobados)**")
-                if not df_aprobados.empty:
-                    notas_redondeadas = df_aprobados['score'].round(0).astype(int)
-                    conteo_notas = notas_redondeadas.value_counts().sort_index()
-                    st.bar_chart(conteo_notas, color="#4CAF50")
-                else:
-                    st.caption("Sin datos.")
+            # --- SUBPESTAÑA 2: GRÁFICOS ---
+            with subtab_graphs:
+                st.write("") # Espaciador
+                col_g1, col_g2 = st.columns(2)
+                
+                with col_g1:
+                    st.markdown("**Distribución de Notas (Aprobados)**")
+                    if not df_aprobados.empty:
+                        notas_redondeadas = df_aprobados['score'].round(0).astype(int)
+                        conteo_notas = notas_redondeadas.value_counts().sort_index()
+                        st.bar_chart(conteo_notas, color="#4CAF50")
+                    else:
+                        st.caption("Sin datos.")
 
-            with col_g2:
-                st.markdown("**Actividad Reciente**")
-                if not df_view.empty:
-                    df_view['fecha_dia'] = df_view['last_updated'].dt.date
-                    actividad = df_view.groupby('fecha_dia').size()
-                    st.line_chart(actividad)
+                with col_g2:
+                    st.markdown("**Actividad Reciente**")
+                    if not df_view.empty:
+                        df_view['fecha_dia'] = df_view['last_updated'].dt.date
+                        actividad = df_view.groupby('fecha_dia').size()
+                        st.line_chart(actividad)
 
         # Ejecutamos la función decorada
         render_dashboard_content()
