@@ -95,7 +95,18 @@ if st.button("Enviar"):
 # 2. CAPA DE DATOS (Turso / LibSQL)
 # ==============================================================================
 
-@st.cache_resource(ttl=60)
+# Función auxiliar para chequear si la conexión sigue viva
+def is_connection_active(conn):
+    try:
+        # Intentamos una consulta ultra-rápida
+        conn.execute("SELECT 1")
+        return True
+    except Exception:
+        # Si falla (por stream not found u otro), devolvemos False
+        return False
+
+# Usamos validate en lugar de (o junto con) ttl
+@st.cache_resource(validate=is_connection_active)
 def get_db_connection():
     """
     Crea una conexión persistente a Turso e inicializa las tablas UNA SOLA VEZ.
