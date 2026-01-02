@@ -95,7 +95,7 @@ if st.button("Enviar"):
 # 2. CAPA DE DATOS (Turso / LibSQL)
 # ==============================================================================
 
-@st.cache_resource
+@st.cache_resource(ttl=60)
 def get_db_connection():
     """
     Crea una conexión persistente a Turso e inicializa las tablas UNA SOLA VEZ.
