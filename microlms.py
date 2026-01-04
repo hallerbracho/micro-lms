@@ -186,26 +186,67 @@ class DatabaseManager:
         # 3. Cálculo de Nota
         score = 0
         if is_correct:
+            # --- LÓGICA DE APROBADOS (10 a 20 pts) ---
             if score_func:
                 try:
                     score = score_func(prev_failures, passed_count)
                 except TypeError:
                     score = score_func(prev_failures)
             else:
-                z_penalty = passed_count * 0.20
-                score = max(20 - (prev_failures * 1.0) - z_penalty, 10) 
-        
-        # 4. Upsert con HORA VENEZUELA
+                MATRICULA_ESTIMADA = 25 
+                posicion = passed_count / MATRICULA_ESTIMADA
+                
+                if posicion <= 0.15:    # Top 15% 
+                    nota_base = 20.0
+                elif posicion <= 0.35:  # Siguiente 20%
+                    nota_base = 18.0
+                elif posicion <= 0.80:  # El grueso del grupo
+                    nota_base = 15.0
+                else:                   # Rezagados
+                    nota_base = 12.0
+                    
+                castigo_error = prev_failures * 0.25
+                score = max(10.0, min(nota_base - castigo_error, 20.0)) 
+        else:
+            # --- NUEVA LÓGICA: Campana de Gauss (0 a 9 pts) para reprobados ---
+            # Usamos random.Random(student_id) para que la nota sea determinista.
+            # Si el alumno recarga la página, seguirá viendo la misma nota de reprobado (su "suerte").
+            rng = random.Random(student_id)
+            
+            # Configuración de la Campana
+            mu = 4.5      # Media (centro entre 0 y 9)
+            sigma = 2.0   # Desviación estándar (para que la mayoría caiga dentro del rango)
+            
+            # Generar nota y limitar (Clamp) entre 0 y 9
+            nota_reprobado = rng.gauss(mu, sigma)
+            score = max(0.0, min(9.0, nota_reprobado))
+            
+        # 4. Upsert con HORA VENEZUELA y Lógica de Preservación
         increment = 0 if is_correct else 1
-        current_time_ve = self._get_ve_time() # Hora UTC-4
+        current_time_ve = self._get_ve_time() 
+        
+        # NOTA SOBRE EL SQL:
+        # Hemos cambiado la lógica de "score =" para que:
+        # 1. Si el intento actual APROBÓ (excluded.is_correct), se guarde la nueva nota (10-20).
+        # 2. Si ya estaba APROBADO antes (grades.is_correct), se mantenga la nota vieja (no se puede bajar nota).
+        # 3. Si REPRUEBA (y no ha aprobado antes), se guarde la nota calculada por Gauss (0-9).
         
         conn.execute("""
             INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(exam_id, student_id) DO UPDATE SET
                 attempts = attempts + excluded.attempts,
-                is_correct = excluded.is_correct,
-                score = CASE WHEN excluded.is_correct THEN excluded.score ELSE grades.score END,
+                
+                -- Si ya aprobó alguna vez (grades.is_correct), se queda aprobado (MAX). 
+                -- Si no, toma el valor del intento actual.
+                is_correct = MAX(grades.is_correct, excluded.is_correct),
+                
+                score = CASE 
+                    WHEN excluded.is_correct THEN excluded.score  -- Nuevo aprobado: Actualizar nota
+                    WHEN grades.is_correct THEN grades.score      -- Ya aprobado antes: Mantener nota
+                    ELSE excluded.score                           -- Reprobado: Guardar nota Gaussiana (0-9)
+                END,
+                
                 last_updated = excluded.last_updated
         """, (exam_id, student_id, increment, is_correct, score, current_time_ve))
         conn.commit()
@@ -554,7 +595,7 @@ def render_admin_panel():
             c_refresh, c_csv, c_filter_exam, c_filter_id = st.columns([1.2, 0.6, 2.1, 2.1], vertical_alignment="top")
             
             with c_refresh:
-                st.button("Refrescar Tabla", use_container_width=True)
+                st.button("Refrescar Tabla", width="stretch")
             
             with c_csv:
                 if csv_data:
@@ -564,7 +605,7 @@ def render_admin_panel():
                         file_name="notas_ve.csv",
                         mime="text/csv",
                         help="Descargar todo en CSV",
-                        use_container_width=True
+                        width="stretch"
                     )
             
             with c_filter_exam:
@@ -672,11 +713,18 @@ def render_admin_panel():
             # --- 2. CÁLCULOS DE RENDIMIENTO ---
             df_aprobados = df_view[df_view['is_correct'] == True]
             
-            if not df_aprobados.empty:
-                promedio_nota = df_aprobados['score'].mean()
-                promedio_intentos = df_aprobados['attempts'].mean()
+            # A. Promedio Global (Toda la sección, incluyendo reprobados gauss)
+            if not df_view.empty:
+                promedio_global = df_view['score'].mean()
             else:
-                promedio_nota = 0
+                promedio_global = 0
+
+            # B. Promedio solo de los que aprobaron (Para comparar)
+            if not df_aprobados.empty:
+                promedio_aprobados = df_aprobados['score'].mean()
+                promedio_intentos = df_aprobados['attempts'].mean() # Intentos hasta lograr el éxito
+            else:
+                promedio_aprobados = 0
                 promedio_intentos = 0
             
             tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
@@ -684,35 +732,112 @@ def render_admin_panel():
             # --- VISUALIZACIÓN DE KPIs ---
             # ==================================================================
             
-            subtab_kpi, subtab_graphs = st.tabs(["📊 Métricas Clave", "📈 Gráficas Detalladas"])
+            subtab_kpi, subtab_graphs, subtab_report = st.tabs(["📊 Métricas Clave", "📈 Gráficas Detalladas", "Informe de Resultados"])
 
             # --- SUBPESTAÑA 1: KPIs ---
             with subtab_kpi:
-                st.write("") # Espaciador
+                #st.write("") # Espaciador
                 c1, c2 = st.columns(2)
                 c1.metric("Total Estudiantes Únicos", total_unicos, delta=f"{total_registros} registros totales", delta_color="off", border=True)
                 c2.metric("Estudiantes Sin Aprobar", total_sin_aprobar, delta=f"{len(set_aprobados)} ya aprobaron", border=True)
                 
-                st.write("") # Espaciador
+                # st.write("") # Espaciador
 
-                c3, c4, c5 = st.columns(3)
-                c3.metric("% Aprobación Real", f"{tasa_exito_real:.1%}", border=True)
-                c4.metric("Nota Promedio", f"{promedio_nota:.2f} pts", border=True)
-                c5.metric("Intentos Promedio", f"{promedio_intentos:.1f}", border=True)
+                c3, c4, c5, c6 = st.columns(4)
+                
+                # METRICA 1: % Aprobación
+                # Delta: Cantidad física de estudiantes que faltan.
+                # Lógica: Si el % es bajo, el delta te dice exactamente cuánto trabajo falta.
+                c3.metric(
+                    "% Aprobación Real", 
+                    f"{tasa_exito_real:.1%}", 
+                    delta=f"{total_sin_aprobar} pendientes",
+                    delta_color="off", # Gris neutro (informativo)
+                    border=True
+                )
+                
+                # METRICA 2: Nota Promedio (Ya la habíamos ajustado)
+                c4.metric(
+                    "Nota Promedio Global", 
+                    f"{promedio_global:.2f} pts", 
+                    delta=f"Aprobados: {promedio_aprobados:.2f}",
+                    delta_color="off",
+                    border=True
+                )
+                
+                # METRICA 3: Intentos Promedio
+                # Delta: Diferencia contra el ideal (1 intento).
+                # Lógica: Si el promedio es 3.5, el delta será "+2.5 vs Ideal". 
+                # Color "inverse": Si el número sube (es positivo), se pone rojo (malo).
+                diff_ideal = promedio_intentos - 1.0
+                c5.metric(
+                    "Intentos Promedio", 
+                    f"{promedio_intentos:.1f}", 
+                    delta=f"+{diff_ideal:.1f} vs Ideal",
+                    delta_color="inverse", # Rojo si es positivo (más intentos es "peor")
+                    border=True
+                )
+                
+                # Calcular Eficiencia Global
+                # Suma total de puntos del salón / Suma total de intentos del salón
+                total_puntos = df_view['score'].sum()
+                total_intentos = df_view['attempts'].sum()
+                
+                if total_intentos > 0:
+                    eficiencia = total_puntos / total_intentos
+                else:
+                    eficiencia = 0
+
+                # Visualizar (Asumiendo que creas una columna c6 o usas una existente)
+                BASE_CALIDAD = 10.0 
+                diff_eficiencia = eficiencia - BASE_CALIDAD
+
+                # Asumiendo que has creado la columna c6, o la agregas en una nueva fila
+                # c3, c4, c5, c6 = st.columns(4) <--- Asegúrate de cambiar esto arriba
+                
+                c6.metric(
+                    "Eficiencia", 
+                    f"{eficiencia:.1f}", 
+                    delta=f"{diff_eficiencia:+.1f} vs Base (10)",
+                    delta_color="normal", # Verde si es > 10, Rojo si es < 10
+                    help="Indica cuántos puntos reales gana el salón por cada clic/intento gastado. Menos de 10 indica mucha adivinanza.", border=True
+                )
 
             # --- SUBPESTAÑA 2: GRÁFICOS ---
             with subtab_graphs:
-                st.write("") # Espaciador
+                # st.write("") # Espaciador
                 col_g1, col_g2 = st.columns(2)
                 
                 with col_g1:
-                    st.markdown("**Distribución de Notas (Aprobados)**")
-                    if not df_aprobados.empty:
-                        notas_redondeadas = df_aprobados['score'].round(0).astype(int)
-                        conteo_notas = notas_redondeadas.value_counts().sort_index()
-                        st.bar_chart(conteo_notas, color="#4CAF50")
+                    st.markdown("**Distribución Global de Notas (0 - 20)**")
+                    if not df_view.empty:
+                        # 1. Crear estructura base (Eje X de 0 a 20)
+                        chart_data = pd.DataFrame(index=range(21))
+                        
+                        # 2. Separar notas y redondear
+                        # Notas < 9.5 se consideran reprobadas (columna 0-9)
+                        notas_reprobados = df_view[df_view['score'] < 9.5]['score'].round(0).astype(int)
+                        # Notas >= 9.5 se consideran aprobadas (columna 10-20)
+                        notas_aprobados = df_view[df_view['score'] >= 9.5]['score'].round(0).astype(int)
+                        
+                        # 3. Llenar conteos
+                        chart_data['Reprobados'] = notas_reprobados.value_counts()
+                        chart_data['Aprobados'] = notas_aprobados.value_counts()
+                        
+                        # Rellenar con 0 donde no haya estudiantes (limpieza visual)
+                        chart_data = chart_data.fillna(0)
+                        
+                        # 4. Graficar con colores semánticos
+                        # Color 1 (Reprobados): Rojo suave (#FF4B4B)
+                        # Color 2 (Aprobados): Verde éxito (#4CAF50)
+                        st.bar_chart(chart_data, color=["#FF4B4B", "#4CAF50"], stack=True)
+                        
+                        # Datos extra textuales
+                        min_nota = df_view['score'].min()
+                        max_nota = df_view['score'].max()
+                        st.caption(f"Rango de notas registrado: {min_nota:.1f} - {max_nota:.1f}")
                     else:
-                        st.caption("Sin datos.")
+                        st.caption("Sin datos para mostrar.")
 
                 with col_g2:
                     st.markdown("**Actividad Reciente**")
@@ -720,6 +845,148 @@ def render_admin_panel():
                         df_view['fecha_dia'] = df_view['last_updated'].dt.date
                         actividad = df_view.groupby('fecha_dia').size()
                         st.line_chart(actividad)
+                        
+                #st.write("") # Espaciador vertical
+                st.subheader("Análisis de Comportamiento (Esfuerzo vs. Nota)", divider=True)
+                
+                if not df_view.empty:
+                    import altair as alt # Asegúrate de que esto no de error, st ya lo trae
+                    
+                    # Preparamos los datos para que el gráfico se vea lindo
+                    # Creamos una columna de "Estado" para el color
+                    df_chart = df_view.copy()
+                    df_chart['Estado'] = df_chart['is_correct'].apply(lambda x: "Aprobado" if x else "Reprobado")
+                    
+                    # Definimos el Gráfico
+                    chart = alt.Chart(df_chart).mark_circle(size=200).encode(
+                        # Eje X: Intentos
+                        x=alt.X('attempts', title='Cantidad de Intentos'),
+                        
+                        # Eje Y: Nota
+                        y=alt.Y('score', title='Nota Obtenida', scale=alt.Scale(domain=[0, 20])),
+                        
+                        # Color según si aprobó o no
+                        color=alt.Color('Estado', scale=alt.Scale(domain=['Aprobado', 'Reprobado'], range=['#4CAF50', '#FF4B4B'])),
+                        
+                        # TOOLTIP: ¡Esto es lo mejor! Al pasar el mouse ves quién es
+                        tooltip=[
+                            alt.Tooltip('student_id', title='Cédula'),
+                            alt.Tooltip('score', title='Nota', format='.2f'),
+                            alt.Tooltip('attempts', title='Intentos'),
+                            alt.Tooltip('last_updated', title='Último Acceso', format='%d/%m %H:%M')
+                        ]
+                    ) # Permite hacer zoom y pan
+                    
+                    st.altair_chart(chart, width="stretch")
+                    
+                    st.info("""
+                    **Cómo leer esta gráfica:**
+                    - 🟢 **Arriba a la Izquierda:** (Pocos intentos, Nota alta) → **Estudiantes Excelentes**.
+                    - 🟢 **Arriba a la Derecha:** (Muchos intentos, Nota alta) → **Persistentes / Fuerza Bruta**.
+                    - 🟢 **Abajo a la Derecha:** (Muchos intentos, Nota baja) → **Estudiantes Frustrados (Ayudar urgente)**.
+                    """)
+                    
+            with subtab_report:
+                #st.write(" ")
+                st.subheader("Diagnóstico Automático del Curso", divider=True)
+                
+                if df_view.empty:
+                    st.info("No hay datos suficientes para generar el informe.")
+                else:
+                    # --- 1. CÁLCULOS INTERNOS PARA EL INFORME ---
+                    # Recalculamos eficiencia localmente por si acaso
+                    sum_score = df_view['score'].sum()
+                    sum_try = df_view['attempts'].sum()
+                    eff_report = (sum_score / sum_try) if sum_try > 0 else 0
+                    
+                    # Segmentación de Estudiantes
+                    # A. LUCHADORES: Reprobados con muchos intentos (> 3) -> Necesitan ayuda
+                    struggling = df_view[(df_view['score'] < 9.5) & (df_view['attempts'] > 3)]
+                    
+                    # B. ADIVINADORES: Aprobados pero con eficiencia baja (> 4 intentos) -> Fuerza bruta
+                    guessers = df_view[(df_view['score'] >= 9.5) & (df_view['attempts'] > 4)]
+                    
+                    # C. ÉLITE: Aprobados con nota excelente (>=19) en 1 intento -> Eximibles/Monitores
+                    elite = df_view[(df_view['score'] >= 19.0) & (df_view['attempts'] == 1)]
+
+                    # --- 2. GENERACIÓN DEL TEXTO ---
+                    
+                    # A. ESTADO DE SALUD DEL EXAMEN
+                    if tasa_exito_real >= 0.80:
+                        estado = "🟢 ÓPTIMO"
+                        msg_estado = "La gran mayoría del curso ha dominado el tema."
+                    elif tasa_exito_real >= 0.50:
+                        estado = "🟡 REGULAR"
+                        msg_estado = "Hay una división clara en el grupo. Se requiere repaso."
+                    else:
+                        estado = "🟡 CRÍTICO"
+                        msg_estado = "La mayoría no ha logrado los objetivos mínimos."
+
+                    # B. ANÁLISIS DE DIFICULTAD
+                    if promedio_intentos < 1.5:
+                        dificultad = "Baja (Posiblemente trivial)"
+                    elif promedio_intentos < 3.0:
+                        dificultad = "Moderada (Esperada)"
+                    else:
+                        dificultad = "Alta (Posible frustración)"
+
+                    # --- 3. RENDERIZADO DEL REPORTE ---
+                    
+                    # Tarjeta de Resumen
+                    with st.container(border=True):
+                        c_inf1, c_inf2 = st.columns(2)
+                        c_inf1.markdown(f"**Estado General:** {estado}")
+                        c_inf1.caption(msg_estado)
+                        
+                        c_inf2.markdown(f"**Dificultad Percibida:** {dificultad}")
+                        if eff_report < 10:
+                            c_inf2.caption("⚠️ Baja eficiencia: Muchos intentos fallidos por punto ganado.")
+                        else:
+                            c_inf2.caption("✅ Alta eficiencia: Respuestas precisas.")
+
+                    #st.divider()
+
+                    # Listas de Acción (Actionable Insights)
+                    c_act1, c_act2, c_act3 = st.columns(3)
+                    
+                    with c_act1:
+                        st.markdown("**Atención Prioritaria**")
+                        st.caption("Estudiantes que intentan mucho pero no logran aprobar (Frustración).")
+                        if not struggling.empty:
+                            st.error(f"{len(struggling)} Estudiantes")
+                            with st.expander("Ver lista"):
+                                st.dataframe(struggling[['student_id', 'attempts', 'score']], hide_index=True)
+                        else:
+                            st.success("Ninguno detectado.")
+
+                    with c_act2:
+                        st.markdown("**Posible Adivinanza**")
+                        st.caption("Aprobaron por persistencia, no necesariamente por conocimiento.")
+                        if not guessers.empty:
+                            st.warning(f"{len(guessers)} Estudiantes")
+                            with st.expander("Ver lista"):
+                                st.dataframe(guessers[['student_id', 'attempts', 'score']], hide_index=True)
+                        else:
+                            st.success("Bajo nivel de adivinanza.")
+
+                    with c_act3:
+                        st.markdown("**Cuadro de Honor**")
+                        st.caption("Puntaje perfecto (o casi perfecto) al primer intento.")
+                        if not elite.empty:
+                            st.info(f"{len(elite)} Estudiantes")
+                            with st.expander("Ver lista"):
+                                st.dataframe(elite[['student_id', 'score']], hide_index=True)
+                        else:
+                            st.caption("Nadie (aún).")
+
+                    # Conclusión Final
+                    #st.write("")
+                    txt_conclusion = f"""
+                    **Conclusión:**  
+                    El curso tiene una eficiencia de **{eff_report:.1f}** puntos por intento. 
+                    Se recomienda contactar a los **{len(struggling)}** estudiantes en riesgo y felicitar a los **{len(elite)}** de alto rendimiento.
+                    """
+                    st.info(txt_conclusion, icon="🤖")
 
         # Ejecutamos la función decorada
         render_dashboard_content()

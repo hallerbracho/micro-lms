@@ -4,15 +4,34 @@
 # Variables inyectadas: st, pd, np, random, db, EXAM_ID, is_admin
 
 # 1.1 VALIDACIÓN DE IDENTIDAD
-raw_input = st.text_input("Ingresa tu cédula de identidad (sólo números)", max_chars=12).strip()
-student_id = "".join(filter(str.isdigit, raw_input))
+# Define aquí las secciones y su matrícula estimada para la curva competitiva
+CONFIG_SECCIONES = {
+    "Sección A (Lunes)": 35,
+    "Sección B (Jueves)": 28,
+    "Sección C (viernes)": 40
+}
 
-if not student_id:
-    st.info("Ingrese su cédula para cargar el examen.")
+col_sec, col_id = st.columns([1, 2])
+with col_id:
+    raw_input = st.text_input("Ingresa tu cédula (sólo números)", max_chars=12).strip()
+    student_id = "".join(filter(str.isdigit, raw_input))
+
+with col_sec:
+    seccion_elegida = st.selectbox("Sección (IMPORTANTE)", list(CONFIG_SECCIONES.keys()), index=None)
+
+# --- TRUCO CLAVE: ID VIRTUAL ---
+# Esto crea un examen "único" en la BD para cada sección (ej: "Parcial1_Sección A")
+# Así los contadores de aprobados y rankings se mantienen separados.
+EXAMEN_SECCION_ID = f"{EXAM_ID}_{seccion_elegida}"
+
+
+if not student_id or not seccion_elegida:
+    st.info("Ingrese su cédula y su sección para cargar el examen.")
     st.stop()
 
 # 1.2 VERIFICACIÓN DE ESTADO EN BD
-status = db.check_student_status(EXAM_ID, student_id)
+status = db.check_student_status(EXAMEN_SECCION_ID, student_id)
+
 if status["has_passed"]:
     st.success(f"✅ Examen completado anteriormente. Calificación: {status['score']}")
     st.caption("Nota calculada: 20 - (penalización por fallos) - (factor competitivo)")
@@ -97,36 +116,35 @@ with st.form("exam_form", enter_to_submit=False):
 # Función de calificación estándar del sistema
 # BLOQUE 3: EVALUACIÓN Y CALIFICACIÓN
 def calcular_nota_personalizada(intentos_previos, aprobados_antes):
-    # Ajustar según matrícula promedio de tus secciones
-    MATRICULA_ESTIMADA = 25    # AJUSTAR PARA CADA SECCIÓN
+    # --- CAMBIO: Obtiene la matrícula específica de la sección seleccionada arriba ---
+    MATRICULA_ESTIMADA = CONFIG_SECCIONES[seccion_elegida] 
+    
+    # Evitar división por cero si la config está mal
+    if MATRICULA_ESTIMADA < 1: MATRICULA_ESTIMADA = 25
     
     # Calcular percentil de llegada (0.0 = Primero, 1.0 = Último)
     posicion = aprobados_antes / MATRICULA_ESTIMADA
     
-    # A. Asignación de Zonas (Competencia por Velocidad/Eficiencia)
-    if posicion <= 0.15:    # Top 15% 
+    # ... (El resto de tu lógica de zonas y nota_base se mantiene igual) ...
+    
+    if posicion <= 0.15:    
         nota_base = 20.0
         zona = "Élite"
-    elif posicion <= 0.35:  # Siguiente 20%
+    elif posicion <= 0.35:
         nota_base = 18.0
         zona = "Destacada"
-    elif posicion <= 0.80:  # El grueso del grupo (45%)
+    elif posicion <= 0.80:
         nota_base = 15.0
         zona = "Estándar"
-    else:                   # Los últimos 20%
+    else:
         nota_base = 12.0
         zona = "Rezagada"
         
-    # B. Penalización por Precisión (AJUSTADO A 0.25)
-    # Se perdona el error humano leve. Se necesita fallar 4 veces para perder 1 punto.
     castigo_error = intentos_previos * 0.25
-    
     nota_final = nota_base - castigo_error
     
-    # Guardamos la zona en sesión para feedback visual
-    st.session_state['zona_alcanzada'] = zona
+    st.session_state['zona_alcanzada'] = f"{zona} ({seccion_elegida})" # Feedback visual
     
-    # Límites: Piso de 10 si responde bien, Techo de 20
     return max(10.0, min(nota_final, 20.0))
     
 
@@ -140,7 +158,7 @@ if enviado:
 
     # 3.2 REGISTRO EN BASE DE DATOS
     intentos, nota = db.register_attempt(
-        EXAM_ID, 
+        EXAMEN_SECCION_ID, 
         student_id, 
         es_correcto, 
         score_func=calcular_nota_personalizada
@@ -160,3 +178,4 @@ if enviado:
         with st.expander("Revisa las observaciones e intenta de nuevo"):
             st.warning(f"Intento #{intentos} registrado.")
             st.info("Revisa la teoría en la barra lateral y vuelve a intentarlo.")
+
