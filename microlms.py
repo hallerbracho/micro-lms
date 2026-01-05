@@ -545,7 +545,7 @@ def render_admin_panel():
 
         
 
-        c1, c2, c3 = st.columns([1, 1, 3])
+        c1, c2, c3, c4 = st.columns([2, 2, 4, 2])
         
         with c1:
             if st.button("Guardar", type="primary"):
@@ -577,6 +577,11 @@ def render_admin_panel():
                 link = f"/?eval={selection}"
                 #st.code(link, language="text")
                 st.link_button("Previsualizar Examen", link)
+                
+        with c4:
+            if selection != "➕ Crear Nuevo...":
+                link_rank = f"/?ranking={selection}"
+                st.link_button("Ranking", link_rank, type="secondary")
 
     # --------------------------------------------------------------------------
     # PESTAÑA 2: TABLA DE NOTAS
@@ -1101,14 +1106,126 @@ def render_admin_panel():
                         
 
 # ==============================================================================
+# OPTIMIZACIÓN: CACHÉ DEL RANKING (microlms.py)
+# ==============================================================================
+
+# La base de datos "descansa" durante 59 segundos de cada minuto.
+@st.cache_data(ttl=60, show_spinner=False) 
+def get_cached_leaderboard_view(exam_id):
+    """
+    Procesa y ordena el ranking. El resultado se congela en RAM por 1 minuto.
+    """
+    df = db_manager.get_all_grades()
+    
+    if df.empty:
+        return pd.DataFrame()
+
+    # Filtros y lógica igual que antes...
+    df_exam = df[(df['exam_id'] == exam_id) & (df['is_correct'] == True)].copy()
+    
+    if df_exam.empty:
+        return pd.DataFrame()
+
+    # Ordenar por Nota (Desc) y luego Tiempo (Asc)
+    df_exam['score'] = pd.to_numeric(df_exam['score'])
+    df_exam = df_exam.sort_values(by=['score', 'last_updated'], ascending=[False, True])
+    
+    # Asignar Posiciones
+    df_exam['Rank'] = range(1, len(df_exam) + 1)
+    
+    def get_medal(rank):
+        #if rank == 1: return "1ro"
+        #if rank == 2: return "2do"
+        #if rank == 3: return "3ro"
+        if rank <= 50: return f"{rank}"
+        return str(rank)
+    
+    df_exam['Posición'] = df_exam['Rank'].apply(get_medal)
+    
+    # Censurar IDs
+    def mask_id(sid):
+        s = str(sid)
+        return "•" * (len(s) - 4) + s[-4:] if len(s) > 4 else s
+        
+    df_exam['Estudiante'] = df_exam['student_id'].apply(mask_id)
+    
+    # Formatear Hora
+    #df_exam['Hora'] = pd.to_datetime(df_exam['last_updated']).dt.strftime('%H:%M:%S')
+
+    # Retornar columnas limpias
+    cols_show = ['Posición', 'Estudiante', 'score', 'attempts']
+    return df_exam[cols_show]
+    
+
+
+def render_public_leaderboard(exam_id):
+    st.markdown(f"##### 🏆 Ranking: {exam_id}")
+    
+    # Consumimos la caché de 60s
+    df_view = get_cached_leaderboard_view(exam_id)
+    
+    if df_view.empty:
+        st.info("⏳ Esperando resultados... (Actualización cada minuto)")
+        if st.button("Probar suerte"):
+            get_cached_leaderboard_view.clear()
+            st.rerun()
+        return
+
+    st.dataframe(
+        df_view,
+        hide_index=True,
+        width='stretch',
+        column_config={
+            "score": st.column_config.ProgressColumn(
+                "Nota", 
+                format="%.2f", 
+                min_value=0, 
+                max_value=20,
+            ),
+            "attempts": st.column_config.NumberColumn("Intentos", format="%d")
+            #"Hora": "Llegada (VE)"
+        },
+        height=600
+    )
+    
+    # Mensaje técnico actualizado
+    st.caption(f"⚡ Datos cacheados (Se actualizan cada 60 segundos). Última carga: {datetime.now().strftime('%H:%M:%S')}")
+    
+    # Botón manual de refresco
+    if st.button("Actualizar Tabla"):
+        st.rerun()
+        
+
+
+# ==============================================================================
 # 4. ENRUTADOR PRINCIPAL
 # ==============================================================================
 def main():
+    # Obtener parámetros de la URL
     query_params = st.query_params
-    exam_id = query_params.get("eval")
-
-    if exam_id:
+    
+    # RUTA 1: Hacer Examen (?eval=ID)
+    if "eval" in query_params:
+        exam_id = query_params["eval"]
         execute_exam(exam_id)
+        
+    # RUTA 2: Ver Ranking Público (?ranking=ID)  <--- NUEVA RUTA
+    elif "ranking" in query_params:
+        exam_id = query_params["ranking"]
+        # Limpiamos sidebar para vista "Kiosco"
+        st.set_page_config(layout="centered", page_title=f"Ranking {exam_id}", page_icon="🏆")
+        
+        # Inyectamos CSS para ocultar menú de hamburguesa en modo público (opcional)
+        st.markdown("""
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            </style>
+            """, unsafe_allow_html=True)
+            
+        render_public_leaderboard(exam_id)
+        
+    # RUTA 3: Panel Admin (Sin parámetros)
     else:
         render_admin_panel()
 
