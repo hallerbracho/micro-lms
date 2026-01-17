@@ -356,6 +356,27 @@ def execute_exam(exam_id):
 # REEMPLAZAR LA CLASE SilentStreamlit ANTIGUA POR ESTA VERSIÓN MEJORADA
 # ==============================================================================
 
+# ==============================================================================
+# CLASE MOCK SESSION STATE (Para soportar notación de punto .clave)
+# ==============================================================================
+class MockSessionState(dict):
+    """
+    Simula el comportamiento híbrido de st.session_state:
+    Funciona como diccionario (state['key']) y como objeto (state.key).
+    """
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'MockSessionState' object has no attribute '{key}'")
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+# ==============================================================================
+# REEMPLAZAR LA CLASE SilentStreamlit POR ESTA VERSIÓN CORREGIDA
+# ==============================================================================
+
 class SilentStreamlit:
     """
     Simula ser 'st' para ejecutar el examen sin interfaz gráfica.
@@ -364,14 +385,26 @@ class SilentStreamlit:
     def __init__(self, fixed_input):
         self.fixed_input = str(fixed_input)
         self.secrets = st.secrets
-        self.session_state = {}
+        
+        # --- CORRECCIÓN CLAVE AQUÍ ---
+        # 1. Usamos MockSessionState en vez de un dict normal para permitir .user_session
+        self.session_state = MockSessionState()
+        
+        # 2. INYECCIÓN DE SESIÓN:
+        # Pre-llenamos los datos para que la Plantilla v9 crea que ya estamos logueados.
+        # Esto evita que el script se detenga en la pantalla de login.
+        self.session_state.user_session = {
+            "verified": True,
+            "id": self.fixed_input,
+            "section": "ACADEMIA TEC" # Sección por defecto para simulaciones
+        }
         
     # --- PROPIEDADES DE LAYOUT ---
     @property
     def sidebar(self):
         return self
         
-    def container(self):
+    def container(self, **kwargs):
         return self
 
     def columns(self, spec, **kwargs):
@@ -391,38 +424,38 @@ class SilentStreamlit:
 
     def text_input(self, label, **kwargs):
         # Si el label sugiere que es el ID, devolvemos el ID fijo.
-        # Si no, devolvemos un string genérico para no romper comparaciones de texto.
         label_lower = label.lower()
         if "id" in label_lower or "cédula" in label_lower or "cedula" in label_lower:
             return self.fixed_input
-        return "dummy_text_simulation"
+        # Si pide nombre para el badge, devolvemos un nombre falso
+        if "nombre" in label_lower:
+            return "Estudiante Simulado"
+        return "dummy_text"
     
     def number_input(self, label, **kwargs):
-        # Devolvemos 1.0 para evitar divisiones por cero si el script hace algun cálculo
         return 1.0 
     
     def slider(self, label, min_value=0, max_value=100, **kwargs):
-        # Devolvemos el valor mínimo para ser seguros
         return min_value
 
     def radio(self, label, options, **kwargs):
-        # Devolvemos la PRIMERA opción disponible (evita errores de índice)
         return options[0] if options else None
 
     def selectbox(self, label, options, **kwargs):
-        # Igual que radio, devolvemos la primera opción
         return options[0] if options else None
         
     def multiselect(self, label, options, **kwargs):
-        # Devolvemos una lista con el primer elemento (simula una selección válida)
         return [options[0]] if options else []
 
     def checkbox(self, label, **kwargs):
-        # Devolvemos False por defecto
         return False
+        
+    def button(self, label, **kwargs):
+        # Importante: devolver False para botones de acción (como Login o Emitir Badge)
+        # para que no intenten ejecutar lógica externa, EXCEPTO si es form_submit
+        return False 
 
     def date_input(self, label, **kwargs):
-        # Devolvemos la fecha de hoy para evitar errores con objetos datetime
         from datetime import date
         return date.today()
 
@@ -434,21 +467,38 @@ class SilentStreamlit:
         return None
         
     def form_submit_button(self, label="Submit", **kwargs):
-        # Simulamos que el botón SIEMPRE se presiona para que el código de validación corra
+        # Simulamos que el botón de enviar respuesta SIEMPRE se presiona
+        # para forzar el cálculo de validación
         return True
+        
+    # --- MÉTODOS DE SALIDA (No hacen nada) ---
+    def markdown(self, *args, **kwargs): pass
+    def title(self, *args, **kwargs): pass
+    def header(self, *args, **kwargs): pass
+    def subheader(self, *args, **kwargs): pass
+    def caption(self, *args, **kwargs): pass
+    def code(self, *args, **kwargs): pass
+    def write(self, *args, **kwargs): pass
+    def info(self, *args, **kwargs): pass
+    def success(self, *args, **kwargs): pass
+    def warning(self, *args, **kwargs): pass
+    def error(self, *args, **kwargs): pass
+    def json(self, *args, **kwargs): pass
+    def metric(self, *args, **kwargs): pass
+    def toast(self, *args, **kwargs): pass
+    def balloons(self, *args, **kwargs): pass
+    def spinner(self, *args, **kwargs): return self 
+    def link_button(self, *args, **kwargs): pass
 
-    # --- OTROS MÉTODOS ---
-    
+    # --- CONTROL DE FLUJO ---
     def stop(self):
+        # Ignoramos stop() para que el script siga corriendo y revele las variables
         pass
     
     def rerun(self):
         pass
-        
-    def toast(self, *args, **kwargs):
-        pass
-
-    # Context Manager support (para 'with st.sidebar:', 'with st.form:', etc)
+    
+    # --- CONTEXT MANAGERS ---
     def __enter__(self):
         return self
     
@@ -459,8 +509,7 @@ class SilentStreamlit:
         yield self
 
     def __getattr__(self, name):
-        # Atrapa cualquier otro método visual (markdown, title, info, ballons, etc.)
-        # y no hace nada, devolviendo una función vacía que retorna self
+        # Catch-all para cualquier cosa que se nos haya olvidado
         return lambda *args, **kwargs: self
         
 
