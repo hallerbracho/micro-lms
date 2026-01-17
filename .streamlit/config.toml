@@ -1,6 +1,6 @@
 [theme]
 base = "light"
-primaryColor = "#F0F0F0"
+primaryColor = "#FF00FF"
 
 [client]
 # Cambia el modo de la barra de herramientas a "minimal" o "viewer"
