@@ -137,6 +137,11 @@ def get_db_connection():
             created_at TIMESTAMP
         )
     """)
+    # Índices para optimizar búsquedas frecuentes
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_exam_correct 
+        ON grades(exam_id, is_correct)
+    """)
     conn.commit()
     # -----------------------------------------------------------------------------
     
@@ -256,6 +261,19 @@ class DatabaseManager:
     def get_all_grades(self):
         conn = self._get_conn()
         cursor = conn.execute("SELECT * FROM grades ORDER BY last_updated DESC")
+        cols = [d[0] for d in cursor.description]
+        return pd.DataFrame(cursor.fetchall(), columns=cols)
+
+    def get_leaderboard_data(self, exam_id: str):
+        conn = self._get_conn()
+        # SQL hace el filtrado y ordenamiento directamente
+        cursor = conn.execute("""
+            SELECT student_id, score, attempts, last_updated 
+            FROM grades 
+            WHERE exam_id=? AND is_correct=1 
+            ORDER BY score DESC, last_updated ASC
+        """, (exam_id,))
+        
         cols = [d[0] for d in cursor.description]
         return pd.DataFrame(cursor.fetchall(), columns=cols)
 
@@ -635,7 +653,12 @@ def render_admin_panel():
     # --------------------------------------------------------------------------
     # PESTAÑA 2: TABLA DE NOTAS
     # --------------------------------------------------------------------------
-    with tab_grades:
+    with tab_grades:    
+        
+        # 1. Función auxiliar cacheada para el CSV
+        @st.cache_data(show_spinner=False)
+        def convert_df_to_csv(dataframe):
+            return dataframe.to_csv(index=False).encode('utf-8')            
         
         @st.fragment
         def render_grades_table():
@@ -643,7 +666,9 @@ def render_admin_panel():
             df = get_cached_all_grades()
             
             # 2. Preparar el CSV con la data completa antes de renderizar botones
-            csv_data = df.to_csv(index=False).encode('utf-8') if not df.empty else None
+            # 2. Generar CSV de forma inteligente (Solo recalcula si el df cambió)
+            csv_data = convert_df_to_csv(df) if not df.empty else None
+            #csv_data = df.to_csv(index=False).encode('utf-8') if not df.empty else None
 
             # 3. Layout de 4 columnas: [Refrescar] [CSV] [Filtro Examen] [Filtro Cédula] <--- CAMBIO AQUÍ
             c_refresh, c_csv, c_filter_exam, c_filter_id = st.columns([1.2, 0.6, 2.1, 2.1], vertical_alignment="top")
@@ -1162,30 +1187,17 @@ def render_admin_panel():
 @st.cache_data(ttl=60, show_spinner=False) 
 def get_cached_leaderboard_view(exam_id):
     """
-    Procesa y ordena el ranking. El resultado se congela en RAM por 1 minuto.
+    Procesa y ordena el ranking delegando el peso a SQL.
     """
-    df = db_manager.get_all_grades()
-    
-    if df.empty:
-        return pd.DataFrame()
-
-    # Filtros y lógica igual que antes...
-    df_exam = df[(df['exam_id'] == exam_id) & (df['is_correct'] == True)].copy()
+    df_exam = db_manager.get_leaderboard_data(exam_id)
     
     if df_exam.empty:
         return pd.DataFrame()
 
-    # Ordenar por Nota (Desc) y luego Tiempo (Asc)
-    df_exam['score'] = pd.to_numeric(df_exam['score'])
-    df_exam = df_exam.sort_values(by=['score', 'last_updated'], ascending=[False, True])
-    
     # Asignar Posiciones
     df_exam['Rank'] = range(1, len(df_exam) + 1)
     
     def get_medal(rank):
-        #if rank == 1: return "1ro"
-        #if rank == 2: return "2do"
-        #if rank == 3: return "3ro"
         if rank <= 50: return f"{rank}"
         return str(rank)
     
@@ -1198,14 +1210,10 @@ def get_cached_leaderboard_view(exam_id):
         
     df_exam['Estudiante'] = df_exam['student_id'].apply(mask_id)
     
-    # Formatear Hora
-    #df_exam['Hora'] = pd.to_datetime(df_exam['last_updated']).dt.strftime('%H:%M:%S')
-
     # Retornar columnas limpias
     cols_show = ['Posición', 'Estudiante', 'score', 'attempts']
     return df_exam[cols_show]
     
-
 
 def render_public_leaderboard(exam_id):
     st.markdown(f"##### 🏆 Ranking: {exam_id}")
