@@ -125,6 +125,8 @@ def get_db_connection():
             score REAL DEFAULT 0,
             is_correct BOOLEAN DEFAULT 0,
             last_updated TIMESTAMP,
+            student_name TEXT,
+            student_list_n INTEGER,
             PRIMARY KEY (exam_id, student_id)
         )
     """)
