@@ -177,8 +177,12 @@ class DatabaseManager:
             return {"has_passed": True, "score": row[0]}
         return {"has_passed": False, "score": 0}
 
-    def register_attempt(self, exam_id: str, student_id: str, is_correct: bool, score_func=None):
+    def register_attempt(self, exam_id: str, student_id: str, is_correct: bool, score_func=None, **kwargs):
         conn = self._get_conn()
+        
+        # --- NUEVAS VARIABLES EXTRAÍDAS ---
+        student_name = kwargs.get('student_name', 'N/A')
+        student_list_n = kwargs.get('student_list_n', 0)
         
         # 1. Fallos previos
         res_fail = conn.execute("SELECT attempts FROM grades WHERE exam_id=? AND student_id=?", (exam_id, student_id)).fetchone()
@@ -213,16 +217,10 @@ class DatabaseManager:
                 castigo_error = prev_failures * 0.25
                 score = max(10.0, min(nota_base - castigo_error, 20.0)) 
         else:
-            # --- NUEVA LÓGICA: Campana de Gauss (0 a 9 pts) para reprobados ---
-            # Usamos random.Random(student_id) para que la nota sea determinista.
-            # Si el alumno recarga la página, seguirá viendo la misma nota de reprobado (su "suerte").
+            # --- LÓGICA: Campana de Gauss (0 a 9 pts) para reprobados ---
             rng = random.Random(student_id)
-            
-            # Configuración de la Campana
-            mu = 4.5      # Media (centro entre 0 y 9)
-            sigma = 2.0   # Desviación estándar (para que la mayoría caiga dentro del rango)
-            
-            # Generar nota y limitar (Clamp) entre 0 y 9
+            mu = 4.5      
+            sigma = 2.0   
             nota_reprobado = rng.gauss(mu, sigma)
             score = max(0.0, min(9.0, nota_reprobado))
             
@@ -230,20 +228,13 @@ class DatabaseManager:
         increment = 0 if is_correct else 1
         current_time_ve = self._get_ve_time() 
         
-        # NOTA SOBRE EL SQL:
-        # Hemos cambiado la lógica de "score =" para que:
-        # 1. Si el intento actual APROBÓ (excluded.is_correct), se guarde la nueva nota (10-20).
-        # 2. Si ya estaba APROBADO antes (grades.is_correct), se mantenga la nota vieja (no se puede bajar nota).
-        # 3. Si REPRUEBA (y no ha aprobado antes), se guarde la nota calculada por Gauss (0-9).
-        
         conn.execute("""
-            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated, student_name, student_list_n)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(exam_id, student_id) DO UPDATE SET
                 attempts = attempts + excluded.attempts,
                 
-                -- Si ya aprobó alguna vez (grades.is_correct), se queda aprobado (MAX). 
-                -- Si no, toma el valor del intento actual.
+                -- Si ya aprobó alguna vez, se queda aprobado (MAX)
                 is_correct = MAX(grades.is_correct, excluded.is_correct),
                 
                 score = CASE 
@@ -252,8 +243,12 @@ class DatabaseManager:
                     ELSE excluded.score                           -- Reprobado: Guardar nota Gaussiana (0-9)
                 END,
                 
-                last_updated = excluded.last_updated
-        """, (exam_id, student_id, increment, is_correct, score, current_time_ve))
+                last_updated = excluded.last_updated,
+                
+                -- Actualizamos el nombre y el nro de lista siempre a su última versión
+                student_name = excluded.student_name,
+                student_list_n = excluded.student_list_n
+        """, (exam_id, student_id, increment, is_correct, score, current_time_ve, student_name, student_list_n))
         conn.commit()
         
         return prev_failures + increment, score
