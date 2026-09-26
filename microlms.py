@@ -179,81 +179,76 @@ class DatabaseManager:
             return {"has_passed": True, "score": row[0]}
         return {"has_passed": False, "score": 0}
 
-    def register_attempt(self, exam_id: str, student_id: str, is_correct: bool, score_func=None, **kwargs):
+    def register_attempt(self, exam_id: str, student_id: str, is_correct: bool, raw_score: float = None, score_func=None):
         conn = self._get_conn()
         
-        # --- NUEVAS VARIABLES EXTRAÍDAS ---
-        student_name = kwargs.get('student_name', 'N/A')
-        student_list_n = kwargs.get('student_list_n', 0)
+        # 1. Recuperar historial del estudiante
+        res = conn.execute(
+            "SELECT attempts, score, is_correct FROM grades WHERE exam_id=? AND student_id=?", 
+            (exam_id, student_id)
+        ).fetchone()
         
-        # 1. Fallos previos
-        res_fail = conn.execute("SELECT attempts FROM grades WHERE exam_id=? AND student_id=?", (exam_id, student_id)).fetchone()
-        prev_failures = res_fail[0] if res_fail else 0
+        prev_attempts = res[0] if res else 0
+        prev_score = res[1] if res else 0.0
+        already_passed = bool(res[2]) if res else False
         
-        # 2. Factor Z (Aprobados globales)
+        # Se incrementa siempre el intento
+        increment = 1
+        current_attempts = prev_attempts + increment
+        
+        # 2. Conteo de aprobados (solo para retrocompatibilidad con exámenes antiguos)
         res_pass = conn.execute("SELECT COUNT(*) FROM grades WHERE exam_id=? AND is_correct=1", (exam_id,)).fetchone()
         passed_count = res_pass[0] if res_pass else 0
         
-        # 3. Cálculo de Nota
-        score = 0
-        if is_correct:
-            # --- LÓGICA DE APROBADOS (10 a 20 pts) ---
-            if score_func:
-                try:
-                    score = score_func(prev_failures, passed_count)
-                except TypeError:
-                    score = score_func(prev_failures)
-            else:
-                MATRICULA_ESTIMADA = 25 
-                posicion = passed_count / MATRICULA_ESTIMADA
-                
-                if posicion <= 0.15:    # Top 15% 
-                    nota_base = 20.0
-                elif posicion <= 0.35:  # Siguiente 20%
-                    nota_base = 18.0
-                elif posicion <= 0.80:  # El grueso del grupo
-                    nota_base = 15.0
-                else:                   # Rezagados
-                    nota_base = 12.0
-                    
-                castigo_error = prev_failures * 0.25
-                score = max(10.0, min(nota_base - castigo_error, 20.0)) 
-        else:
-            # --- LÓGICA: Campana de Gauss (0 a 9 pts) para reprobados ---
-            rng = random.Random(student_id)
-            mu = 4.5      
-            sigma = 2.0   
-            nota_reprobado = rng.gauss(mu, sigma)
-            score = max(0.0, min(9.0, nota_reprobado))
+        # 3. Resolución Polimórfica de la Nota (Evita TypeErrors)
+        score = 0.0
+        if score_func:
+            import inspect
+            sig = inspect.signature(score_func)
+            params_count = len(sig.parameters)
             
-        # 4. Upsert con HORA VENEZUELA y Lógica de Preservación
-        increment = 0 if is_correct else 1
-        current_time_ve = self._get_ve_time() 
-        
+            try:
+                if params_count >= 3:
+                    # NUEVA FIRMA para examen1-MN.py: (intentos, is_correct, raw_score)
+                    score = score_func(current_attempts, is_correct, raw_score)
+                elif params_count == 2:
+                    # Firma legacy antigua: (prev_failures, passed_count)
+                    score = score_func(prev_attempts, passed_count)
+                else:
+                    # Firma elemental antigua: (prev_failures)
+                    score = score_func(prev_attempts)
+            except Exception:
+                score = prev_score
+        else:
+            # Fallback nativo: Síntesis Logística Acotada
+            base_progreso = raw_score if raw_score is not None else (100.0 if is_correct else 30.0)
+            factor_intentos = 0.50 + 0.50 / (1.0 + 0.15 * max(0, current_attempts - 1))
+            rendimiento = base_progreso * factor_intentos
+            score = 20.0 / (1.0 + np.exp(-0.08 * (rendimiento - 50.0)))
+            score = float(np.clip(score, 2.0, 19.8))
+
+        # La nota final nunca disminuye respecto a un aprobado previo
+        final_score = max(prev_score, score) if already_passed else score
+        new_passed = already_passed or is_correct
+        current_time_ve = self._get_ve_time()
+
+        # 4. Upsert seguro en Turso (LibSQL)
         conn.execute("""
-            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated, student_name, student_list_n)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(exam_id, student_id) DO UPDATE SET
                 attempts = attempts + excluded.attempts,
-                
-                -- Si ya aprobó alguna vez, se queda aprobado (MAX)
                 is_correct = MAX(grades.is_correct, excluded.is_correct),
-                
                 score = CASE 
-                    WHEN excluded.is_correct THEN excluded.score  -- Nuevo aprobado: Actualizar nota
-                    WHEN grades.is_correct THEN grades.score      -- Ya aprobado antes: Mantener nota
-                    ELSE excluded.score                           -- Reprobado: Guardar nota Gaussiana (0-9)
+                    WHEN excluded.is_correct THEN excluded.score
+                    WHEN grades.is_correct THEN grades.score
+                    ELSE excluded.score
                 END,
-                
-                last_updated = excluded.last_updated,
-                
-                -- Actualizamos el nombre y el nro de lista siempre a su última versión
-                student_name = excluded.student_name,
-                student_list_n = excluded.student_list_n
-        """, (exam_id, student_id, increment, is_correct, score, current_time_ve, student_name, student_list_n))
+                last_updated = excluded.last_updated
+        """, (exam_id, student_id, increment, is_correct, round(final_score, 2), current_time_ve))
         conn.commit()
         
-        return prev_failures + increment, score
+        return current_attempts, round(final_score, 2)
 
     def get_all_grades(self):
         conn = self._get_conn()
