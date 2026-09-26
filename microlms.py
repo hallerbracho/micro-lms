@@ -1,17 +1,36 @@
-import streamlit as st
-import libsql_experimental as libsql
-import pandas as pd
-import numpy as np
+# -*- coding: utf-8 -*-
+"""
+MicroLMS - Plataforma Ligera de Evaluaciones Paramétricas
+Motor de evaluación determinista, analítica docente y CMS de exámenes.
+"""
+
+from datetime import datetime, timedelta, timezone
+import hmac
+import inspect
 import random
-from datetime import datetime, timedelta, timezone  # <--- SE AGREGARON LIBRERÍAS DE TIEMPO
 import types
-import scipy
+from typing import Any, Dict, List, Optional, Tuple
+
+import altair as alt
+import libsql_experimental as libsql
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 # ==============================================================================
-# 1. CONFIGURACIÓN Y ESTILOS
+# 1. CONFIGURACIÓN, CONSTANTES Y ESTILOS
 # ==============================================================================
-#st.set_page_config(layout="wide", page_title="Plataforma de Evaluación", page_icon="🎓")
-st.set_page_config(layout="centered", page_title="Plataforma de Evaluación", page_icon="🎓")
+
+# st.set_page_config DEBE ser el primer comando ejecutable de Streamlit
+st.set_page_config(
+    layout="centered",
+    page_title="Plataforma de Evaluación",
+    page_icon="🎓",
+    initial_sidebar_state="auto"
+)
+
+# Zona Horaria Oficial: Venezuela (UTC-4)
+TZ_VENEZUELA = timezone(timedelta(hours=-4))
 
 ST_STYLE = """
 <style>
@@ -19,108 +38,120 @@ ST_STYLE = """
     footer {visibility: hidden;}
     .stApp { background-color: #ffffff; color: #111111; }
     
-    /* --- ESTILO TIPO IDE PARA EL TEXTAREA --- */
+    /* IDE Code Area */
     div[data-testid="stTextArea"] textarea { 
         font-family: 'Consolas', 'Monaco', 'Courier New', monospace !important; 
-        font-size: 12px !important;  /* Fuente más pequeña */
+        font-size: 13px !important;
         line-height: 1.5 !important;
-        background-color: #1e1e1e !important; /* Fondo oscuro tipo VS Code */
-        color: #d4d4d4 !important; /* Texto claro */
+        background-color: #1e1e1e !important;
+        color: #d4d4d4 !important;
+        border-radius: 6px;
     }
     
-    .stButton>button { border-radius: 4px; border: 1px solid #ccc; width: 100%; }
-    .stButton>button:hover { border-color: #333; color: #333; }
+    .stButton>button { 
+        border-radius: 6px; 
+        font-weight: 500;
+        width: 100%; 
+        transition: all 0.2s ease-in-out;
+    }
     
     section[data-testid="stSidebar"] {
-            width: 440px !important; # Set the width to your desired value            
-        }
-        
-    .block-container {
-        max-width: 800px !important; /* <--- AJUSTA ESTE VALOR (ej. 800px, 1000px, 60%) */
-        padding-top: 3rem !important;
-        padding-bottom: 3rem !important;
+        width: 420px !important;
     }
         
+    .block-container {
+        max-width: 850px !important;
+        padding-top: 2rem !important;
+        padding-bottom: 3rem !important;
+    }
 </style>
 """
 st.markdown(ST_STYLE, unsafe_allow_html=True)
 
-# Plantilla por defecto para nuevos exámenes
+DEFAULT_TEMPLATE = '''# --- PLANTILLA DE EVALUACIÓN DETERMINISTA ---
+# Variables provistas en el entorno:
+# st, pd, np, random, db, EXAM_ID, is_admin, sidebar_area
 
-DEFAULT_TEMPLATE = """# --- INICIO DE PLANTILLA ---
-# Variables inyectadas: st, pd, np, random, db, EXAM_ID, student_id (si ya fue ingresado)
+st.title("Evaluación Interactiva")
 
-# 1. VALIDACIÓN
-student_id = st.text_input("Ingrese su Cédula / ID", max_chars=12).strip()
+# 1. IDENTIFICACIÓN Y ESTADO
+student_id = st.text_input("Ingrese su Cédula o Identificador:", max_chars=12).strip()
 if not student_id:
-    st.warning("Ingrese su ID para comenzar.")
+    st.info("👋 Ingrese su identificación para generar sus parámetros individuales.")
     st.stop()
 
-# Verificar estado
+# Verificar si el estudiante ya aprobó previamente
 status = db.check_student_status(EXAM_ID, student_id)
 if status["has_passed"]:
-    st.success(f"✅ Examen completado. Calificación: {status['score']}")
+    st.success(f"✅ Ya has completado con éxito esta prueba. Calificación: **{status['score']:.2f} pts**")
     st.stop()
 
-# Semilla determinista
+# Semilla determinista ligada a la cédula
 seed_val = int("".join(filter(str.isdigit, student_id)) or 0)
 random.seed(seed_val)
+np.random.seed(seed_val)
 
-# 2. CONTENIDO (MODIFICAR AQUÍ)
-titulo = "Pregunta de Ejemplo"
-a = random.randint(1, 10)
-b = random.randint(1, 10)
-solucion = a + b
+# 2. GENERACIÓN DE PARÁMETROS
+num_a = random.randint(10, 50)
+num_b = random.randint(5, 25)
+solucion = num_a * num_b
 
-st.markdown(f"## {titulo}")
+# 3. INTERFAZ Y ENUNCIADO
+st.markdown(f"""
+### Pregunta de Aplicación
+Un sistema opera bajo una tasa de carga de **{num_a} unidades** distribuidas uniformemente 
+a través de un factor multiplicador base **{num_b}**.
 
-st.info(f"¿Cuánto es {a} + {b}?")
+Determine el rendimiento total resultante.
+""")
 
-respuesta = st.number_input("Respuesta:", step=0.0001)
+with st.form("exam_form"):
+    respuesta_usuario = st.number_input("Respuesta calculada:", step=0.01, format="%.2f")
+    enviado = st.form_submit_button("Enviar Respuesta", type="primary")
 
-# 3. EVALUACIÓN
-if st.button("Enviar"):
-    es_correcto = (respuesta == solucion)
+# 4. CALIFICACIÓN
+if enviado:
+    tolerancia = 0.05
+    es_correcto = abs(respuesta_usuario - solucion) <= tolerancia
+    
     intentos, nota = db.register_attempt(EXAM_ID, student_id, es_correcto)
     
     if es_correcto:
-        #st.balloons()
-        st.success(f"¡Correcto! Nota: {nota}")
+        st.balloons()
+        st.success(f"🎉 ¡Excelente trabajo! Respuesta correcta. Nota: **{nota:.2f} / 20.00** (Intentos: {intentos})")
     else:
-        st.error("Incorrecto.")
-"""
-
+        st.error(f"❌ Valor incorrecto. Has consumido {intentos} intento(s). Revisa tus operaciones e intenta nuevamente.")
+'''
 
 # ==============================================================================
-# 2. CAPA DE DATOS (Turso / LibSQL)
+# 2. CAPA DE BASE DE DATOS (Turso / LibSQL)
 # ==============================================================================
 
-# Función auxiliar para chequear si la conexión sigue viva
-def is_connection_active(conn):
+def is_connection_active(conn) -> bool:
+    """Verifica si la conexión a LibSQL sigue respondiendo."""
     try:
-        # Intentamos una consulta ultra-rápida
         conn.execute("SELECT 1")
         return True
     except Exception:
-        # Si falla (por stream not found u otro), devolvemos False
         return False
 
-# Usamos validate en lugar de (o junto con) ttl
 @st.cache_resource(validate=is_connection_active)
 def get_db_connection():
-    """
-    Crea una conexión persistente a Turso e inicializa las tablas UNA SOLA VEZ.
-    """
-    url = st.secrets["TURSO_DB_URL"]
-    token = st.secrets["TURSO_AUTH_TOKEN"]
+    """Genera una conexión persistente a Turso e inicializa el esquema de datos."""
+    url = st.secrets.get("TURSO_DB_URL")
+    token = st.secrets.get("TURSO_AUTH_TOKEN")
+    
+    if not url or not token:
+        st.error("Faltan las credenciales TURSO_DB_URL y/o TURSO_AUTH_TOKEN en st.secrets.")
+        st.stop()
+        
     conn = libsql.connect(database=url, auth_token=token)
     
-    # --- BLOQUE MOVIDO: Se ejecuta solo la primera vez que arranca el servidor ---
-    # Tabla de Notas (Grades)
+    # Creación idempotente de tablas
     conn.execute("""
         CREATE TABLE IF NOT EXISTS grades (
-            exam_id TEXT,
-            student_id TEXT,
+            exam_id TEXT NOT NULL,
+            student_id TEXT NOT NULL,
             attempts INTEGER DEFAULT 0,
             score REAL DEFAULT 0,
             is_correct BOOLEAN DEFAULT 0,
@@ -130,114 +161,109 @@ def get_db_connection():
             PRIMARY KEY (exam_id, student_id)
         )
     """)
-    
-    # Tabla de Exámenes (Source Code Storage)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS exams (
             exam_id TEXT PRIMARY KEY,
-            source_code TEXT,
-            created_at TIMESTAMP
+            source_code TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL
         )
     """)
-    # Índices para optimizar búsquedas frecuentes
     conn.execute("""
-        CREATE INDEX IF NOT EXISTS idx_exam_correct 
+        CREATE INDEX IF NOT EXISTS idx_grades_exam_correct 
         ON grades(exam_id, is_correct)
     """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_grades_exam_date 
+        ON grades(exam_id, last_updated)
+    """)
     conn.commit()
-    # -----------------------------------------------------------------------------
-    
     return conn
 
-@st.cache_data(ttl=60)  # <--- Cachear por 1 minuto
-def get_cached_all_grades():
-    # Usamos el manager global
-    return db_manager.get_all_grades()
 
 class DatabaseManager:
-    def __init__(self):
-        # Ya no hace falta inicializar la DB aquí, se hace en la conexión
-        pass
-
-    def _get_conn(self):
+    """Administrador centralizado de persistencia y reglas de negocio."""
+    
+    @staticmethod
+    def _get_conn():
         return get_db_connection()
 
-    def _get_ve_time(self):
-        """Retorna la hora actual en UTC-4 (Venezuela) en formato string SQL"""
-        # Obtenemos UTC actual y restamos 4 horas
-        ve_time = datetime.now(timezone.utc) - timedelta(hours=4)
-        return ve_time.strftime('%Y-%m-%d %H:%M:%S')
+    @staticmethod
+    def get_ve_time_str() -> str:
+        """Devuelve la fecha/hora actual formateada en hora legal de Venezuela (UTC-4)."""
+        return datetime.now(TZ_VENEZUELA).strftime('%Y-%m-%d %H:%M:%S')
 
-    # --- MÉTODOS DE ESTUDIANTE ---
-    def check_student_status(self, exam_id: str, student_id: str):
+    def check_student_status(self, exam_id: str, student_id: str) -> Dict[str, Any]:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT score FROM grades WHERE exam_id=? AND student_id=? AND is_correct=1", 
             (exam_id, student_id)
         ).fetchone()
+        
         if row:
-            return {"has_passed": True, "score": row[0]}
-        return {"has_passed": False, "score": 0}
+            return {"has_passed": True, "score": float(row[0])}
+        return {"has_passed": False, "score": 0.0}
 
-    def register_attempt(self, exam_id: str, student_id: str, is_correct: bool, raw_score: float = None, score_func=None):
+    def register_attempt(
+        self, 
+        exam_id: str, 
+        student_id: str, 
+        is_correct: bool, 
+        raw_score: Optional[float] = None, 
+        score_func: Optional[Any] = None
+    ) -> Tuple[int, float]:
         conn = self._get_conn()
         
-        # 1. Recuperar historial del estudiante
+        # 1. Consultar estado previo
         res = conn.execute(
             "SELECT attempts, score, is_correct FROM grades WHERE exam_id=? AND student_id=?", 
             (exam_id, student_id)
         ).fetchone()
         
         prev_attempts = res[0] if res else 0
-        prev_score = res[1] if res else 0.0
+        prev_score = float(res[1]) if res else 0.0
         already_passed = bool(res[2]) if res else False
         
-        # Se incrementa siempre el intento
-        increment = 1
-        current_attempts = prev_attempts + increment
+        current_attempts = prev_attempts + 1
         
-        # 2. Conteo de aprobados (solo para retrocompatibilidad con exámenes antiguos)
-        res_pass = conn.execute("SELECT COUNT(*) FROM grades WHERE exam_id=? AND is_correct=1", (exam_id,)).fetchone()
+        # 2. Conteo de aprobados para funciones con firma extendida
+        res_pass = conn.execute(
+            "SELECT COUNT(*) FROM grades WHERE exam_id=? AND is_correct=1", 
+            (exam_id,)
+        ).fetchone()
         passed_count = res_pass[0] if res_pass else 0
-        
-        # 3. Resolución Polimórfica de la Nota (Evita TypeErrors)
+
+        # 3. Resolución de Nota
         score = 0.0
-        if score_func:
-            import inspect
-            sig = inspect.signature(score_func)
-            params_count = len(sig.parameters)
-            
+        if score_func and callable(score_func):
             try:
+                sig = inspect.signature(score_func)
+                params_count = len(sig.parameters)
                 if params_count >= 3:
-                    # NUEVA FIRMA para examen1-MN.py: (intentos, is_correct, raw_score)
-                    score = score_func(current_attempts, is_correct, raw_score)
+                    score = float(score_func(current_attempts, is_correct, raw_score))
                 elif params_count == 2:
-                    # Firma legacy antigua: (prev_failures, passed_count)
-                    score = score_func(prev_attempts, passed_count)
+                    score = float(score_func(prev_attempts, passed_count))
                 else:
-                    # Firma elemental antigua: (prev_failures)
-                    score = score_func(prev_attempts)
+                    score = float(score_func(prev_attempts))
             except Exception:
                 score = prev_score
         else:
-            # Fallback nativo: Síntesis Logística Acotada
+            # Algoritmo logístico acotado por defecto (escala 0 - 20)
             base_progreso = raw_score if raw_score is not None else (100.0 if is_correct else 30.0)
             factor_intentos = 0.50 + 0.50 / (1.0 + 0.15 * max(0, current_attempts - 1))
             rendimiento = base_progreso * factor_intentos
             score = 20.0 / (1.0 + np.exp(-0.08 * (rendimiento - 50.0)))
-            score = float(np.clip(score, 2.0, 19.8))
+            score = float(np.clip(score, 2.0, 20.0))
 
-        # La nota final nunca disminuye respecto a un aprobado previo
         final_score = max(prev_score, score) if already_passed else score
-        new_passed = already_passed or is_correct
-        current_time_ve = self._get_ve_time()
+        new_passed = 1 if (already_passed or is_correct) else 0
+        current_time_ve = self.get_ve_time_str()
 
-        # 4. Upsert seguro en Turso (LibSQL)
+        # 4. Upsert atómico
         conn.execute("""
             INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(exam_id, student_id) DO UPDATE SET
-                attempts = attempts + excluded.attempts,
+                attempts = attempts + 1,
                 is_correct = MAX(grades.is_correct, excluded.is_correct),
                 score = CASE 
                     WHEN excluded.is_correct THEN excluded.score
@@ -245,45 +271,45 @@ class DatabaseManager:
                     ELSE excluded.score
                 END,
                 last_updated = excluded.last_updated
-        """, (exam_id, student_id, increment, is_correct, round(final_score, 2), current_time_ve))
+        """, (exam_id, student_id, 1, new_passed, round(final_score, 2), current_time_ve))
         conn.commit()
+
+        # Invalidar cachés de lecturas
+        get_cached_all_grades.clear()
+        get_cached_leaderboard_view.clear()
         
         return current_attempts, round(final_score, 2)
 
-    def get_all_grades(self):
+    def get_all_grades(self) -> pd.DataFrame:
         conn = self._get_conn()
         cursor = conn.execute("SELECT * FROM grades ORDER BY last_updated DESC")
         cols = [d[0] for d in cursor.description]
         return pd.DataFrame(cursor.fetchall(), columns=cols)
 
-    def get_leaderboard_data(self, exam_id: str):
+    def get_leaderboard_data(self, exam_id: str) -> pd.DataFrame:
         conn = self._get_conn()
-        # SQL hace el filtrado y ordenamiento directamente
         cursor = conn.execute("""
             SELECT student_id, score, attempts, last_updated 
             FROM grades 
             WHERE exam_id=? AND is_correct=1 
-            ORDER BY score DESC, last_updated ASC
+            ORDER BY score DESC, attempts ASC, last_updated ASC
         """, (exam_id,))
-        
         cols = [d[0] for d in cursor.description]
         return pd.DataFrame(cursor.fetchall(), columns=cols)
 
-    # --- MÉTODOS DE GESTIÓN DE EXÁMENES (CMS) ---
-    def get_exam_list(self):
+    def get_exam_list(self) -> List[str]:
         conn = self._get_conn()
         rows = conn.execute("SELECT exam_id FROM exams ORDER BY created_at DESC").fetchall()
         return [r[0] for r in rows]
 
-    def get_exam_code(self, exam_id):
+    def get_exam_code(self, exam_id: str) -> Optional[str]:
         conn = self._get_conn()
         row = conn.execute("SELECT source_code FROM exams WHERE exam_id=?", (exam_id,)).fetchone()
         return row[0] if row else None
 
-    def save_exam(self, exam_id, code):
+    def save_exam(self, exam_id: str, code: str) -> None:
         conn = self._get_conn()
-        current_time_ve = self._get_ve_time() # Hora UTC-4
-        
+        current_time_ve = self.get_ve_time_str()
         conn.execute("""
             INSERT INTO exams (exam_id, source_code, created_at) VALUES (?, ?, ?)
             ON CONFLICT(exam_id) DO UPDATE SET 
@@ -291,49 +317,148 @@ class DatabaseManager:
                 created_at = excluded.created_at
         """, (exam_id, code, current_time_ve))
         conn.commit()
+        get_cached_exam_code.clear()
 
-    def delete_exam(self, exam_id):
+    def delete_exam(self, exam_id: str) -> None:
         conn = self._get_conn()
         conn.execute("DELETE FROM exams WHERE exam_id=?", (exam_id,))
         conn.commit()
+        get_cached_exam_code.clear()
+        get_cached_all_grades.clear()
+        get_cached_leaderboard_view.clear()
+
 
 db_manager = DatabaseManager()
 
-# --- INICIO NUEVO BLOQUE DE CACHÉ ---
-@st.cache_data(show_spinner=False, ttl=300) 
-def get_cached_exam_code(exam_id):
-    """
-    Recupera el código del examen y lo guarda en memoria por 5 minutos (300 seg).
-    Si 30 estudiantes entran a la vez, solo la primera petición va a la BD.
-    Las otras 29 se sirven instantáneamente desde la RAM.
-    """
+# ==============================================================================
+# 3. CACHÉS DE RENDIMIENTO
+# ==============================================================================
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_cached_all_grades() -> pd.DataFrame:
+    return db_manager.get_all_grades()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_exam_code(exam_id: str) -> Optional[str]:
     return db_manager.get_exam_code(exam_id)
-# --- FIN NUEVO BLOQUE DE CACHÉ ---
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_leaderboard_view(exam_id: str) -> pd.DataFrame:
+    df_exam = db_manager.get_leaderboard_data(exam_id)
+    if df_exam.empty:
+        return pd.DataFrame()
+
+    def rank_to_medal(idx: int) -> str:
+        medals = {1: "🥇 1", 2: "🥈 2", 3: "🥉 3"}
+        return medals.get(idx, f"#{idx}")
+
+    df_exam['Posición'] = [rank_to_medal(i + 1) for i in range(len(df_exam))]
+    
+    # Enmascarar ID: ej. V-28123456 -> ••••3456
+    def mask_id(sid: Any) -> str:
+        s = str(sid).strip()
+        return "••••" + s[-4:] if len(s) > 4 else s
+
+    df_exam['Estudiante'] = df_exam['student_id'].apply(mask_id)
+    return df_exam[['Posición', 'Estudiante', 'score', 'attempts', 'last_updated']]
 
 # ==============================================================================
-# 3. LÓGICA DE INTERFAZ (Admin vs Estudiante)
+# 4. SIMULADOR HEADLESS (Mock de Streamlit para el Solucionador)
 # ==============================================================================
 
-def execute_exam(exam_id):
-    """Carga el código desde BD y lo ejecuta en un entorno seguro"""
+class MockSessionState(dict):
+    """Permite acceso por atributo (.clave) y por llave (['clave'])."""
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(f"'MockSessionState' no posee el atributo '{key}'")
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
+class SilentStreamlit:
+    """Entorno simulado que absorbe llamadas de UI y provee datos al solucionador."""
+    
+    def __init__(self, student_id: str):
+        self.fixed_input = str(student_id)
+        self.secrets = st.secrets
+        self.session_state = MockSessionState()
+        self.session_state.user_session = {
+            "verified": True,
+            "id": self.fixed_input,
+            "section": "SIMULACION"
+        }
+
+    @property
+    def sidebar(self):
+        return self
+
+    def container(self, **kwargs): return self
+    def columns(self, spec, **kwargs):
+        count = spec if isinstance(spec, int) else len(spec)
+        return [self] * count
+    def tabs(self, tabs_list, **kwargs): return [self] * len(tabs_list)
+    def expander(self, *args, **kwargs): return self
+    def form(self, *args, **kwargs): return self
+    def status(self, *args, **kwargs): return self
+    def chat_message(self, *args, **kwargs): return self
+
+    # Captura inteligente de widgets de entrada
+    def text_input(self, label, **kwargs):
+        l_lower = label.lower()
+        if any(term in l_lower for term in ["id", "cédula", "cedula", "identificación"]):
+            return self.fixed_input
+        return "Valor_Simulado"
+
+    def number_input(self, label, **kwargs): return 1.0
+    def slider(self, label, min_value=0, max_value=100, **kwargs): return min_value
+    def radio(self, label, options, **kwargs): return options[0] if options else None
+    def selectbox(self, label, options, **kwargs): return options[0] if options else None
+    def multiselect(self, label, options, **kwargs): return [options[0]] if options else []
+    def checkbox(self, label, **kwargs): return False
+    def toggle(self, label, **kwargs): return False
+    def button(self, label, **kwargs): return False
+    def form_submit_button(self, label="Submit", **kwargs): return True
+
+    # Métodos neutros
+    def stop(self): pass
+    def rerun(self): pass
+    def __enter__(self): return self
+    def __exit__(self, exc_type, exc_val, exc_tb): pass
+    def __iter__(self): yield self
+    def __getattr__(self, name): return lambda *args, **kwargs: self
+
+
+class MockDB:
+    """Mock de BD para forzar que el script calcule los valores de respuesta."""
+    def check_student_status(self, exam_id, student_id):
+        return {"has_passed": False, "score": 0.0}
+    def register_attempt(self, *args, **kwargs):
+        return 1, 20.0
+
+# ==============================================================================
+# 5. MOTOR DE EJECUCIÓN DEL EXAMEN
+# ==============================================================================
+
+def execute_exam(exam_id: str):
+    """Carga y ejecuta el código del examen en un espacio de nombres controlado."""
     source_code = get_cached_exam_code(exam_id)
-    #source_code = db_manager.get_exam_code(exam_id)
     
     if not source_code:
-        st.error("El examen solicitado no existe o no está disponible.")
+        st.error("⚠️ La evaluación solicitada no existe o ha sido dada de baja.")
         if st.button("Volver al Inicio"):
             st.query_params.clear()
             st.rerun()
         return
 
-    # Determinamos si es admin basándonos en la sesión actual
-    is_admin_user = st.session_state.get('auth', False)
+    is_admin_user = bool(st.session_state.get('auth', False))
     
     with st.sidebar:
-        
-        contenedor_teoria = st.container()        
+        contenedor_sidebar = st.container()
     
-    context = {
+    execution_context = {
         'st': st,
         'pd': pd,
         'np': np,
@@ -341,881 +466,372 @@ def execute_exam(exam_id):
         'db': db_manager,
         'EXAM_ID': exam_id,
         'datetime': datetime,
-        'is_admin': is_admin_user,  # <--- NUEVA VARIABLE INYECTADA
-        'sidebar_area': contenedor_teoria
+        'is_admin': is_admin_user,
+        'sidebar_area': contenedor_sidebar
     }
     
     try:
-        exec(source_code, context)
+        exec(source_code, execution_context)
     except Exception as e:
-        st.error("🚨 Error interno en la ejecución del examen.")
-        with st.expander("Detalles para el profesor"):
-            st.code(str(e))
-
-
-
-# ==============================================================================
-# CLASES AUXILIARES PARA EL SOLUCIONADOR (Agregar antes de render_admin_panel)
-# ==============================================================================
+        st.error("🚨 Se produjo un error al ejecutar la evaluación.")
+        if is_admin_user:
+            with st.expander("Detalles del Error (Visibles solo para Administradores)"):
+                st.exception(e)
 
 # ==============================================================================
-# CLASES AUXILIARES (Actualizar esta sección al inicio del script)
+# 6. PANEL DOCENTE Y ADMINISTRATIVO
 # ==============================================================================
 
-# ==============================================================================
-# REEMPLAZAR LA CLASE SilentStreamlit ANTIGUA POR ESTA VERSIÓN MEJORADA
-# ==============================================================================
-
-# ==============================================================================
-# CLASE MOCK SESSION STATE (Para soportar notación de punto .clave)
-# ==============================================================================
-class MockSessionState(dict):
-    """
-    Simula el comportamiento híbrido de st.session_state:
-    Funciona como diccionario (state['key']) y como objeto (state.key).
-    """
-    def __getattr__(self, key):
-        try:
-            return self[key]
-        except KeyError:
-            raise AttributeError(f"'MockSessionState' object has no attribute '{key}'")
-
-    def __setattr__(self, key, value):
-        self[key] = value
-
-# ==============================================================================
-# REEMPLAZAR LA CLASE SilentStreamlit POR ESTA VERSIÓN CORREGIDA
-# ==============================================================================
-
-class SilentStreamlit:
-    """
-    Simula ser 'st' para ejecutar el examen sin interfaz gráfica.
-    Devuelve tipos de datos compatibles para evitar TypeErrors durante la simulación.
-    """
-    def __init__(self, fixed_input):
-        self.fixed_input = str(fixed_input)
-        self.secrets = st.secrets
-        
-        # --- CORRECCIÓN CLAVE AQUÍ ---
-        # 1. Usamos MockSessionState en vez de un dict normal para permitir .user_session
-        self.session_state = MockSessionState()
-        
-        # 2. INYECCIÓN DE SESIÓN:
-        # Pre-llenamos los datos para que la Plantilla v9 crea que ya estamos logueados.
-        # Esto evita que el script se detenga en la pantalla de login.
-        self.session_state.user_session = {
-            "verified": True,
-            "id": self.fixed_input,
-            "section": "ACADEMIA TEC" # Sección por defecto para simulaciones
-        }
-        
-    # --- PROPIEDADES DE LAYOUT ---
-    @property
-    def sidebar(self):
-        return self
-        
-    def container(self, **kwargs):
-        return self
-
-    def columns(self, spec, **kwargs):
-        count = spec if isinstance(spec, int) else len(spec)
-        return [self] * count
-        
-    def tabs(self, tabs_list, **kwargs):
-        return [self] * len(tabs_list)
-        
-    def expander(self, label, **kwargs):
-        return self
-        
-    def form(self, key, **kwargs):
-        return self
-
-    # --- WIDGETS DE ENTRADA (Manejo de Tipos de Datos) ---
-
-    def text_input(self, label, **kwargs):
-        # Si el label sugiere que es el ID, devolvemos el ID fijo.
-        label_lower = label.lower()
-        if "id" in label_lower or "cédula" in label_lower or "cedula" in label_lower:
-            return self.fixed_input
-        # Si pide nombre para el badge, devolvemos un nombre falso
-        if "nombre" in label_lower:
-            return "Estudiante Simulado"
-        return "dummy_text"
-    
-    def number_input(self, label, **kwargs):
-        return 1.0 
-    
-    def slider(self, label, min_value=0, max_value=100, **kwargs):
-        return min_value
-
-    def radio(self, label, options, **kwargs):
-        return options[0] if options else None
-
-    def selectbox(self, label, options, **kwargs):
-        return options[0] if options else None
-        
-    def multiselect(self, label, options, **kwargs):
-        return [options[0]] if options else []
-
-    def checkbox(self, label, **kwargs):
-        return False
-        
-    def button(self, label, **kwargs):
-        # Importante: devolver False para botones de acción (como Login o Emitir Badge)
-        # para que no intenten ejecutar lógica externa, EXCEPTO si es form_submit
-        return False 
-
-    def date_input(self, label, **kwargs):
-        from datetime import date
-        return date.today()
-
-    def time_input(self, label, **kwargs):
-        from datetime import datetime
-        return datetime.now().time()
-        
-    def file_uploader(self, label, **kwargs):
-        return None
-        
-    def form_submit_button(self, label="Submit", **kwargs):
-        # Simulamos que el botón de enviar respuesta SIEMPRE se presiona
-        # para forzar el cálculo de validación
+def check_admin_auth() -> bool:
+    """Verificación segura de contraseña docente."""
+    if st.session_state.get('auth', False):
         return True
-        
-    # --- MÉTODOS DE SALIDA (No hacen nada) ---
-    def markdown(self, *args, **kwargs): pass
-    def title(self, *args, **kwargs): pass
-    def header(self, *args, **kwargs): pass
-    def subheader(self, *args, **kwargs): pass
-    def caption(self, *args, **kwargs): pass
-    def code(self, *args, **kwargs): pass
-    def write(self, *args, **kwargs): pass
-    def info(self, *args, **kwargs): pass
-    def success(self, *args, **kwargs): pass
-    def warning(self, *args, **kwargs): pass
-    def error(self, *args, **kwargs): pass
-    def json(self, *args, **kwargs): pass
-    def metric(self, *args, **kwargs): pass
-    def toast(self, *args, **kwargs): pass
-    def balloons(self, *args, **kwargs): pass
-    def spinner(self, *args, **kwargs): return self 
-    def link_button(self, *args, **kwargs): pass
 
-    # --- CONTROL DE FLUJO ---
-    def stop(self):
-        # Ignoramos stop() para que el script siga corriendo y revele las variables
-        pass
+    st.header("Panel de Control Docente", divider=True)
+    admin_secret = st.secrets.get("ADMIN_PASSWORD")
     
-    def rerun(self):
-        pass
-    
-    # --- CONTEXT MANAGERS ---
-    def __enter__(self):
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        pass
+    if not admin_secret:
+        st.error("No se ha definido ADMIN_PASSWORD en los secretos de la aplicación.")
+        return False
 
-    def __iter__(self):
-        yield self
-
-    def __getattr__(self, name):
-        # Catch-all para cualquier cosa que se nos haya olvidado
-        return lambda *args, **kwargs: self
+    with st.form("admin_login_form"):
+        pwd = st.text_input("Contraseña de Acceso", type="password")
+        submitted = st.form_submit_button("Ingresar", type="primary")
         
+        if submitted:
+            # Comparación en tiempo constante para evitar Timing Attacks
+            if hmac.compare_digest(pwd, admin_secret):
+                st.session_state['auth'] = True
+                st.rerun()
+            else:
+                st.error("Contraseña incorrecta.")
+    return False
 
-class MockDB:
-    """Simula la BD para forzar que el examen se ejecute (ignora si ya aprobó)."""
-    def check_student_status(self, exam_id, student_id):
-        # Siempre dice que NO ha aprobado para que el código calcule la solución
-        return {"has_passed": False, "score": 0}
-        
-    def register_attempt(self, *args, **kwargs):
-        return 0, 0
-
-
-
-# ==============================================================================
-# REEMPLAZAR LA FUNCIÓN render_admin_panel COMPLETA CON ESTA VERSIÓN
-# ==============================================================================
 
 def render_admin_panel():
-    if not st.session_state.get('auth'):
-        st.header("Panel de Control Docente", divider=True)
-        pwd = st.text_input("Contraseña de Administrador", type="password")
-        if st.button("Acceder", type="primary"):
-            try:
-                if pwd == st.secrets["ADMIN_PASSWORD"]:
-                    st.session_state['auth'] = True
-                    st.rerun()
-                else:
-                    st.toast("Contraseña incorrecta", icon="❌")
-            except KeyError:
-                st.error("Error: Configure ADMIN_PASSWORD en st.secrets")
+    if not check_admin_auth():
         return
 
-    # 2. MENU LATERAL (Sidebar) - Solo visible cuando es admin
     with st.sidebar:
-        st.header("Panel de Control", divider=True)
-        st.caption("Modo Administrador Activo (Hora VE)")
-        
-        if st.button("Cerrar Sesión"):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
+        st.header("⚙️ Sesión Docente", divider=True)
+        st.caption(f"Hora Local: {db_manager.get_ve_time_str()} (VE)")
+        if st.button("Cerrar Sesión", type="secondary"):
+            st.session_state.clear()
             st.rerun()
 
-    # --- AHORA SON 3 PESTAÑAS ---
-    tab_dashboard, tab_grades, tab_editor, tab_solver = st.tabs(["Dashboard", "Registro de calificaciones", "Editor de evaluaciones", " Respuestas"])
-    #tab_dashboard, tab_grades, tab_editor = st.tabs(["Dashboard Docente", "Libro de Notas", "Gestión de Exámenes"])
+    tab_dash, tab_grades, tab_cms, tab_solver = st.tabs([
+        "📊 Dashboard", 
+        "📋 Calificaciones", 
+        "✏️ Editor de Evaluaciones", 
+        "🔍 Solucionador Determinista"
+    ])
 
     # --------------------------------------------------------------------------
-    # PESTAÑA 1: EDITOR
+    # TAB 1: DASHBOARD
     # --------------------------------------------------------------------------
-    with tab_editor:
-        exam_ids = db_manager.get_exam_list()
-        options = ["➕ Crear Nuevo..."] + exam_ids
+    with tab_dash:
+        df = get_cached_all_grades()
         
-        # --- CAMBIO: Definimos 2 columnas (proporción 1 a 2) ---
-        col_sel, col_inp = st.columns([4, 5], vertical_alignment="bottom")
-        
-        with col_sel:
-            selection = st.selectbox("Seleccionar Examen", options)
-        
-        # Lógica de actualización de estado (se mantiene igual, pero fuera de las cols visuales)
-        if st.session_state.get('last_selection') != selection:
-            if selection == "➕ Crear Nuevo...":
-                st.session_state['editor_area'] = DEFAULT_TEMPLATE
-                st.session_state['current_exam_id'] = ""
-            else:
-                code_from_db = db_manager.get_exam_code(selection)
-                st.session_state['editor_area'] = code_from_db
-                st.session_state['current_exam_id'] = selection
-            
-            st.session_state['last_selection'] = selection
-
-        with col_inp:
-            if selection == "➕ Crear Nuevo...":
-                exam_id_input = st.text_input("ID del Examen (ej: ex1-mn-sec-A-2026A)", value=st.session_state.get('current_exam_id', ""))
-                st.session_state['current_exam_id'] = exam_id_input
-            else:
-                exam_id_input = selection
-                st.info(f"Editando examen: **{exam_id_input}**")
-            
-        new_code = st.text_area("Código Python", height=350, key="editor_area")
-
-        
-
-        c1, c2, c3, c4 = st.columns([2, 2, 4, 2])
-        
-        with c1:
-            if st.button("Guardar", type="primary"):
-                target_id = st.session_state.get('current_exam_id', "").strip()
-                if not target_id:
-                    st.error("Debe ingresar un ID para el examen")
-                else:
-                    db_manager.save_exam(target_id, new_code)
-                    get_cached_exam_code.clear() 
-                    st.success(f"¡Examen '{target_id}' guardado!")
-                    st.session_state['last_selection'] = target_id
+        if df.empty:
+            st.info("No hay datos de calificaciones disponibles para mostrar métricas.")
+        else:
+            c_ref, c_filter = st.columns([1, 3], vertical_alignment="bottom")
+            with c_ref:
+                if st.button("🔄 Refrescar Métricas"):
+                    get_cached_all_grades.clear()
                     st.rerun()
-
-        with c2:
-            if selection != "➕ Crear Nuevo...":
-                # --- MODIFICACIÓN: Confirmación con Popover ---
-                with st.popover("Eliminar", help="Borrar este examen permanentemente"):
-                    st.markdown(f"¿Estás seguro de borrar **{selection}**?")
-                    st.warning("Esta acción no se puede deshacer.")
-                    
-                    if st.button("Sí, borrar definitivamente", type="primary"):
-                        db_manager.delete_exam(selection)
-                        st.toast(f"Examen '{selection}' eliminado correctamente", icon="🗑️")
-                        st.session_state['last_selection'] = None
-                        st.rerun()
-        
-        with c3:
-            if selection != "➕ Crear Nuevo...":
-                link = f"/?eval={selection}"
-                #st.code(link, language="text")
-                st.link_button("Previsualizar Examen", link)
-                
-        with c4:
-            if selection != "➕ Crear Nuevo...":
-                link_rank = f"/?ranking={selection}"
-                st.link_button("Ranking", link_rank, type="secondary")
-
-    # --------------------------------------------------------------------------
-    # PESTAÑA 2: TABLA DE NOTAS
-    # --------------------------------------------------------------------------
-    with tab_grades:    
-        
-        # 1. Función auxiliar cacheada para el CSV
-        @st.cache_data(show_spinner=False)
-        def convert_df_to_csv(dataframe):
-            return dataframe.to_csv(index=False).encode('utf-8')            
-        
-        @st.fragment
-        def render_grades_table():
-            # 1. Cargar datos
-            df = get_cached_all_grades()
-            
-            # 2. Preparar el CSV con la data completa antes de renderizar botones
-            # 2. Generar CSV de forma inteligente (Solo recalcula si el df cambió)
-            csv_data = convert_df_to_csv(df) if not df.empty else None
-            #csv_data = df.to_csv(index=False).encode('utf-8') if not df.empty else None
-
-            # 3. Layout de 4 columnas: [Refrescar] [CSV] [Filtro Examen] [Filtro Cédula] <--- CAMBIO AQUÍ
-            c_refresh, c_csv, c_filter_exam, c_filter_id = st.columns([1.2, 0.6, 2.1, 2.1], vertical_alignment="top")
-            
-            with c_refresh:
-                st.button("Refrescar Tabla", width="stretch")
-            
-            with c_csv:
-                if csv_data:
-                    st.download_button(
-                        label="📥",
-                        data=csv_data,
-                        file_name="notas_ve.csv",
-                        mime="text/csv",
-                        help="Descargar todo en CSV",
-                        width="stretch"
-                    )
-            
-            with c_filter_exam:
-                if not df.empty:
-                    filtro_exam = st.multiselect(
-                        "Filtrar por Examen", 
-                        df['exam_id'].unique(), 
-                        label_visibility="collapsed", 
-                        placeholder="Filtrar por examen..."
-                    )
-                else:
-                    filtro_exam = []
-
-            # --- NUEVO BLOQUE PARA CÉDULA ---
-            with c_filter_id:
-                filtro_cedula = st.text_input(
-                    "Filtrar por Cédula", 
-                    placeholder="🔍 Buscar Cédula...", 
+            with c_filter:
+                examenes = list(df['exam_id'].unique())
+                seleccion_dash = st.multiselect(
+                    "Filtrar evaluaciones", 
+                    options=examenes, 
+                    placeholder="Todas las evaluaciones incluidas",
                     label_visibility="collapsed"
                 )
-            # --------------------------------
 
-            # 4. Renderizado de la tabla
-            if not df.empty:
-                # Aplicamos filtro de EXAMEN
-                if filtro_exam:
-                    df = df[df['exam_id'].isin(filtro_exam)]
-                
-                # --- APLICAMOS FILTRO DE CÉDULA ---
-                if filtro_cedula:
-                    # Convierte a string y busca coincidencia parcial (case insensitive)
-                    df = df[df['student_id'].astype(str).str.contains(filtro_cedula, case=False, na=False)]
-                # ----------------------------------
-                
-                st.dataframe(
-                    df, 
-                    width='stretch',
-                    column_config={
-                        "is_correct": st.column_config.CheckboxColumn("Aprobado", width="content"),
-                        "score": st.column_config.ProgressColumn("Nota", min_value=0, max_value=20, format="%.2f", width="content"),
-                        "last_updated": st.column_config.DatetimeColumn("Fecha (VE)", format="DD/MM/YYYY hh:mm a", width="content")
-                    }
-                )
-            else:
-                st.info("No hay registros aún.")
+            df_view = df[df['exam_id'].isin(seleccion_dash)].copy() if seleccion_dash else df.copy()
+            df_view['score'] = pd.to_numeric(df_view['score'], errors='coerce').fillna(0.0)
+            df_view['attempts'] = pd.to_numeric(df_view['attempts'], errors='coerce').fillna(0)
+            df_view['last_updated'] = pd.to_datetime(df_view['last_updated'], errors='coerce')
 
-        # Llamamos a la función decorada
-        render_grades_table()
-
-    # --------------------------------------------------------------------------
-    # PESTAÑA 3: DASHBOARD DOCENTE (NUEVO)
-    # --------------------------------------------------------------------------
-    with tab_dashboard:
-        
-        @st.fragment
-        def render_dashboard_content():
-            # 1. Cargar datos PRIMERO para poder llenar el selector
-            df = get_cached_all_grades()
+            # Métricas Agregadas
+            total_unicos = df_view['student_id'].nunique()
+            aprobados_df = df_view[df_view['is_correct'] == 1]
+            aprobados_unicos = aprobados_df['student_id'].nunique()
+            pendientes = total_unicos - aprobados_unicos
             
-            if df.empty:
-                st.info("No hay suficientes datos para mostrar el dashboard.")
-                if st.button("Reintentar"): st.rerun()
-                return 
-
-            # 2. Configuración del Header (Botón + Selector en la misma fila)
-            # Usamos vertical_alignment="bottom" para alinear el botón con el input
-            c_btn, c_sel = st.columns([1, 3], vertical_alignment="bottom")
-
-            with c_btn:
-                if st.button("Actualizar métricas"):
-                    pass 
-
-            with c_sel:
-                lista_examenes = list(df['exam_id'].unique())
-                seleccion_dash = st.multiselect(
-                    "Filtrar Dashboard", 
-                    lista_examenes,
-                    default=None,
-                    placeholder="Seleccionar Exámenes para Análisis...",
-                    label_visibility="collapsed"  # Ocultamos la etiqueta para que quede limpio
-                )
+            tasa_aprobacion = (aprobados_unicos / total_unicos * 100) if total_unicos > 0 else 0.0
+            promedio_global = df_view['score'].mean() if not df_view.empty else 0.0
+            promedio_aprobados = aprobados_df['score'].mean() if not aprobados_df.empty else 0.0
+            promedio_intentos = aprobados_df['attempts'].mean() if not aprobados_df.empty else 0.0
             
-            #st.divider() 
+            total_pts = df_view['score'].sum()
+            total_att = df_view['attempts'].sum()
+            eficiencia = (total_pts / total_att) if total_att > 0 else 0.0
+
+            sub_kpi, sub_charts, sub_report = st.tabs(["Métricas Clave", "Gráficos de Comportamiento", "Informe Diagnóstico"])
             
-            # --- LÓGICA DE FILTRADO ---
-            if seleccion_dash:
-                df_view = df[df['exam_id'].isin(seleccion_dash)].copy()
-            else:
-                df_view = df.copy()
-
-            # Asegurar tipos de datos para cálculos
-            df_view['score'] = pd.to_numeric(df_view['score'])
-            df_view['attempts'] = pd.to_numeric(df_view['attempts'])
-            df_view['last_updated'] = pd.to_datetime(df_view['last_updated'])
-
-            # --- 1. CÁLCULOS DE POBLACIÓN (Set Theory) ---
-            set_todos = set(df_view['student_id'])
-            set_aprobados = set(df_view[df_view['is_correct'] == True]['student_id'])
-            set_sin_aprobar = set_todos - set_aprobados
-            
-            total_unicos = len(set_todos)
-            total_sin_aprobar = len(set_sin_aprobar)
-            total_registros = len(df_view)
-
-            # --- 2. CÁLCULOS DE RENDIMIENTO ---
-            df_aprobados = df_view[df_view['is_correct'] == True]
-            
-            # A. Promedio Global (Toda la sección, incluyendo reprobados gauss)
-            if not df_view.empty:
-                promedio_global = df_view['score'].mean()
-            else:
-                promedio_global = 0
-
-            # B. Promedio solo de los que aprobaron (Para comparar)
-            if not df_aprobados.empty:
-                promedio_aprobados = df_aprobados['score'].mean()
-                promedio_intentos = df_aprobados['attempts'].mean() # Intentos hasta lograr el éxito
-            else:
-                promedio_aprobados = 0
-                promedio_intentos = 0
-            
-            tasa_exito_real = (len(set_aprobados) / total_unicos) if total_unicos > 0 else 0
-
-            # --- VISUALIZACIÓN DE KPIs ---
-            # ==================================================================
-            
-            subtab_kpi, subtab_graphs, subtab_report = st.tabs(["📊 Métricas Clave", "📈 Gráficas Detalladas", "Informe de Resultados"])
-
-            # --- SUBPESTAÑA 1: KPIs ---
-            with subtab_kpi:
-                #st.write("") # Espaciador
+            with sub_kpi:
                 c1, c2 = st.columns(2)
-                c1.metric("Total Estudiantes Únicos", total_unicos, delta=f"{total_registros} registros totales", delta_color="off", border=True)
-                c2.metric("Estudiantes Sin Aprobar", total_sin_aprobar, delta=f"{len(set_aprobados)} ya aprobaron", border=True)
+                c1.metric("Estudiantes Evaluados", total_unicos, delta=f"{len(df_view)} registros")
+                c2.metric("Pendientes por Aprobar", pendientes, delta=f"{aprobados_unicos} aprobados")
                 
-                # st.write("") # Espaciador
-
                 c3, c4, c5, c6 = st.columns(4)
-                
-                # METRICA 1: % Aprobación
-                # Delta: Cantidad física de estudiantes que faltan.
-                # Lógica: Si el % es bajo, el delta te dice exactamente cuánto trabajo falta.
-                c3.metric(
-                    "% Aprobación Real", 
-                    f"{tasa_exito_real:.1%}", 
-                    delta=f"{total_sin_aprobar} pendientes",
-                    delta_color="off", # Gris neutro (informativo)
-                    border=True
-                )
-                
-                # METRICA 2: Nota Promedio (Ya la habíamos ajustado)
-                c4.metric(
-                    "Nota Promedio Global", 
-                    f"{promedio_global:.2f} pts", 
-                    delta=f"Aprobados: {promedio_aprobados:.2f}",
-                    delta_color="off",
-                    border=True
-                )
-                
-                # METRICA 3: Intentos Promedio
-                # Delta: Diferencia contra el ideal (1 intento).
-                # Lógica: Si el promedio es 3.5, el delta será "+2.5 vs Ideal". 
-                # Color "inverse": Si el número sube (es positivo), se pone rojo (malo).
-                diff_ideal = promedio_intentos - 1.0
-                c5.metric(
-                    "Intentos Promedio", 
-                    f"{promedio_intentos:.1f}", 
-                    delta=f"+{diff_ideal:.1f} vs Ideal",
-                    delta_color="inverse", # Rojo si es positivo (más intentos es "peor")
-                    border=True
-                )
-                
-                # Calcular Eficiencia Global
-                # Suma total de puntos del salón / Suma total de intentos del salón
-                total_puntos = df_view['score'].sum()
-                total_intentos = df_view['attempts'].sum()
-                
-                if total_intentos > 0:
-                    eficiencia = total_puntos / total_intentos
-                else:
-                    eficiencia = 0
+                c3.metric("Tasa de Aprobación", f"{tasa_aprobacion:.1f}%")
+                c4.metric("Promedio Global", f"{promedio_global:.2f} pts", delta=f"Aprobados: {promedio_aprobados:.2f}")
+                c5.metric("Intentos Promedio", f"{promedio_intentos:.1f}", delta=f"{promedio_intentos - 1.0:+.1f} vs Ideal", delta_color="inverse")
+                c6.metric("Eficiencia Global", f"{eficiencia:.1f}", delta=f"{eficiencia - 10.0:+.1f} vs Base (10)")
 
-                # Visualizar (Asumiendo que creas una columna c6 o usas una existente)
-                BASE_CALIDAD = 10.0 
-                diff_eficiencia = eficiencia - BASE_CALIDAD
-
-                # Asumiendo que has creado la columna c6, o la agregas en una nueva fila
-                # c3, c4, c5, c6 = st.columns(4) <--- Asegúrate de cambiar esto arriba
-                
-                c6.metric(
-                    "Eficiencia", 
-                    f"{eficiencia:.1f}", 
-                    delta=f"{diff_eficiencia:+.1f} vs Base (10)",
-                    delta_color="normal", # Verde si es > 10, Rojo si es < 10
-                    help="Indica cuántos puntos reales gana el salón por cada clic/intento gastado. Menos de 10 indica mucha adivinanza.", border=True
-                )
-
-            # --- SUBPESTAÑA 2: GRÁFICOS ---
-            with subtab_graphs:
-                # st.write("") # Espaciador
+            with sub_charts:
                 col_g1, col_g2 = st.columns(2)
-                
                 with col_g1:
-                    st.markdown("**Distribución Global de Notas (0 - 20)**")
-                    if not df_view.empty:
-                        # 1. Crear estructura base (Eje X de 0 a 20)
-                        chart_data = pd.DataFrame(index=range(21))
-                        
-                        # 2. Separar notas y redondear
-                        # Notas < 9.5 se consideran reprobadas (columna 0-9)
-                        notas_reprobados = df_view[df_view['score'] < 9.5]['score'].round(0).astype(int)
-                        # Notas >= 9.5 se consideran aprobadas (columna 10-20)
-                        notas_aprobados = df_view[df_view['score'] >= 9.5]['score'].round(0).astype(int)
-                        
-                        # 3. Llenar conteos
-                        chart_data['Reprobados'] = notas_reprobados.value_counts()
-                        chart_data['Aprobados'] = notas_aprobados.value_counts()
-                        
-                        # Rellenar con 0 donde no haya estudiantes (limpieza visual)
-                        chart_data = chart_data.fillna(0)
-                        
-                        # 4. Graficar con colores semánticos
-                        # Color 1 (Reprobados): Rojo suave (#FF4B4B)
-                        # Color 2 (Aprobados): Verde éxito (#4CAF50)
-                        st.bar_chart(chart_data, color=["#FF4B4B", "#4CAF50"], stack=True)
-                        
-                        # Datos extra textuales
-                        min_nota = df_view['score'].min()
-                        max_nota = df_view['score'].max()
-                        st.caption(f"Rango de notas registrado: {min_nota:.1f} - {max_nota:.1f}")
-                    else:
-                        st.caption("Sin datos para mostrar.")
+                    st.markdown("**Distribución de Notas**")
+                    hist_data = pd.DataFrame(index=range(21))
+                    reprobados = df_view[df_view['score'] < 9.5]['score'].round().astype(int).value_counts()
+                    aprobados = df_view[df_view['score'] >= 9.5]['score'].round().astype(int).value_counts()
+                    hist_data['Reprobados'] = reprobados
+                    hist_data['Aprobados'] = aprobados
+                    hist_data = hist_data.fillna(0)
+                    st.bar_chart(hist_data, color=["#FF4B4B", "#2ECC71"], stack=True)
 
                 with col_g2:
-                    st.markdown("**Actividad Reciente**")
-                    if not df_view.empty:
-                        df_view['fecha_dia'] = df_view['last_updated'].dt.date
-                        actividad = df_view.groupby('fecha_dia').size()
-                        st.line_chart(actividad)
-                        
-                #st.write("") # Espaciador vertical
-                st.subheader("Análisis de Comportamiento (Esfuerzo vs. Nota)", divider=True)
+                    st.markdown("**Actividad Diaria**")
+                    if not df_view['last_updated'].isna().all():
+                        df_view['dia'] = df_view['last_updated'].dt.date
+                        st.line_chart(df_view.groupby('dia').size())
+
+                st.markdown("**Relación Intentos vs. Calificación Final**")
+                df_view['Estado'] = np.where(df_view['is_correct'] == 1, 'Aprobado', 'Reprobado')
+                scatter_chart = alt.Chart(df_view).mark_circle(size=140).encode(
+                    x=alt.X('attempts:Q', title='Intentos Realizados'),
+                    y=alt.Y('score:Q', title='Nota Obtenida (0-20)', scale=alt.Scale(domain=[0, 20])),
+                    color=alt.Color('Estado:N', scale=alt.Scale(domain=['Aprobado', 'Reprobado'], range=['#2ECC71', '#FF4B4B'])),
+                    tooltip=[
+                        alt.Tooltip('student_id:N', title='ID'),
+                        alt.Tooltip('score:Q', title='Nota', format='.2f'),
+                        alt.Tooltip('attempts:Q', title='Intentos')
+                    ]
+                ).interactive()
+                st.altair_chart(scatter_chart, width="stretch")
+
+            with sub_report:
+                st.subheader("Diagnóstico Automatizado del Rendimiento", divider=True)
                 
-                if not df_view.empty:
-                    import altair as alt # Asegúrate de que esto no de error, st ya lo trae
-                    
-                    # Preparamos los datos para que el gráfico se vea lindo
-                    # Creamos una columna de "Estado" para el color
-                    df_chart = df_view.copy()
-                    df_chart['Estado'] = df_chart['is_correct'].apply(lambda x: "Aprobado" if x else "Reprobado")
-                    
-                    # Definimos el Gráfico
-                    chart = alt.Chart(df_chart).mark_circle(size=200).encode(
-                        # Eje X: Intentos
-                        x=alt.X('attempts', title='Cantidad de Intentos'),
-                        
-                        # Eje Y: Nota
-                        y=alt.Y('score', title='Nota Obtenida', scale=alt.Scale(domain=[0, 20])),
-                        
-                        # Color según si aprobó o no
-                        color=alt.Color('Estado', scale=alt.Scale(domain=['Aprobado', 'Reprobado'], range=['#4CAF50', '#FF4B4B'])),
-                        
-                        # TOOLTIP: ¡Esto es lo mejor! Al pasar el mouse ves quién es
-                        tooltip=[
-                            alt.Tooltip('student_id', title='Cédula'),
-                            alt.Tooltip('score', title='Nota', format='.2f'),
-                            alt.Tooltip('attempts', title='Intentos'),
-                            alt.Tooltip('last_updated', title='Último Acceso', format='%d/%m %H:%M')
-                        ]
-                    ) # Permite hacer zoom y pan
-                    
-                    st.altair_chart(chart, width="stretch")
-                    
-                    st.info("""
-                    **Cómo leer esta gráfica:**
-                    - 🟢 **Arriba a la Izquierda:** (Pocos intentos, Nota alta) → **Estudiantes Excelentes**.
-                    - 🟢 **Arriba a la Derecha:** (Muchos intentos, Nota alta) → **Persistentes / Fuerza Bruta**.
-                    - 🟢 **Abajo a la Derecha:** (Muchos intentos, Nota baja) → **Estudiantes Frustrados (Ayudar urgente)**.
-                    """)
-                    
-            with subtab_report:
-                #st.write(" ")
-                st.subheader("Diagnóstico Automático del Curso", divider=True)
+                # Identificación de perfiles de riesgo
+                en_riesgo = df_view[(df_view['score'] < 9.5) & (df_view['attempts'] >= 3)]
+                fuerza_bruta = df_view[(df_view['score'] >= 9.5) & (df_view['attempts'] > 4)]
+                destacados = df_view[(df_view['score'] >= 19.0) & (df_view['attempts'] == 1)]
                 
-                if df_view.empty:
-                    st.info("No hay datos suficientes para generar el informe.")
-                else:
-                    # --- 1. CÁLCULOS INTERNOS PARA EL INFORME ---
-                    # Recalculamos eficiencia localmente por si acaso
-                    sum_score = df_view['score'].sum()
-                    sum_try = df_view['attempts'].sum()
-                    eff_report = (sum_score / sum_try) if sum_try > 0 else 0
-                    
-                    # Segmentación de Estudiantes
-                    # A. LUCHADORES: Reprobados con muchos intentos (> 3) -> Necesitan ayuda
-                    struggling = df_view[(df_view['score'] < 9.5) & (df_view['attempts'] > 3)]
-                    
-                    # B. ADIVINADORES: Aprobados pero con eficiencia baja (> 4 intentos) -> Fuerza bruta
-                    guessers = df_view[(df_view['score'] >= 9.5) & (df_view['attempts'] > 4)]
-                    
-                    # C. ÉLITE: Aprobados con nota excelente (>=19) en 1 intento -> Eximibles/Monitores
-                    elite = df_view[(df_view['score'] >= 19.0) & (df_view['attempts'] == 1)]
+                r1, r2, r3 = st.columns(3)
+                with r1:
+                    st.error(f"🚨 En Riesgo: {len(en_riesgo)}")
+                    st.caption("Reprobados con 3 o más intentos.")
+                    if not en_riesgo.empty:
+                        with st.expander("Ver lista"):
+                            st.dataframe(en_riesgo[['student_id', 'attempts', 'score']], hide_index=True)
+                with r2:
+                    st.warning(f"⚠️ Fuerza Bruta: {len(fuerza_bruta)}")
+                    st.caption("Aprobados mediante excesivos reintentos.")
+                    if not fuerza_bruta.empty:
+                        with st.expander("Ver lista"):
+                            st.dataframe(fuerza_bruta[['student_id', 'attempts', 'score']], hide_index=True)
+                with r3:
+                    st.success(f"🌟 Cuadro de Honor: {len(destacados)}")
+                    st.caption("Calificación ≥ 19 al primer intento.")
+                    if not destacados.empty:
+                        with st.expander("Ver lista"):
+                            st.dataframe(destacados[['student_id', 'score']], hide_index=True)
 
-                    # --- 2. GENERACIÓN DEL TEXTO ---
-                    
-                    # A. ESTADO DE SALUD DEL EXAMEN
-                    if tasa_exito_real >= 0.80:
-                        estado = "🟢 ÓPTIMO"
-                        msg_estado = "La gran mayoría del curso ha dominado el tema."
-                    elif tasa_exito_real >= 0.50:
-                        estado = "🟡 REGULAR"
-                        msg_estado = "Hay una división clara en el grupo. Se requiere repaso."
-                    else:
-                        estado = "🟡 CRÍTICO"
-                        msg_estado = "La mayoría no ha logrado los objetivos mínimos."
-
-                    # B. ANÁLISIS DE DIFICULTAD
-                    if promedio_intentos < 1.5:
-                        dificultad = "Baja (Posiblemente trivial)"
-                    elif promedio_intentos < 3.0:
-                        dificultad = "Moderada (Esperada)"
-                    else:
-                        dificultad = "Alta (Posible frustración)"
-
-                    # --- 3. RENDERIZADO DEL REPORTE ---
-                    
-                    # Tarjeta de Resumen
-                    with st.container(border=True):
-                        c_inf1, c_inf2 = st.columns(2)
-                        c_inf1.markdown(f"**Estado General:** {estado}")
-                        c_inf1.caption(msg_estado)
-                        
-                        c_inf2.markdown(f"**Dificultad Percibida:** {dificultad}")
-                        if eff_report < 10:
-                            c_inf2.caption("⚠️ Baja eficiencia: Muchos intentos fallidos por punto ganado.")
-                        else:
-                            c_inf2.caption("✅ Alta eficiencia: Respuestas precisas.")
-
-                    #st.divider()
-
-                    # Listas de Acción (Actionable Insights)
-                    c_act1, c_act2, c_act3 = st.columns(3)
-                    
-                    with c_act1:
-                        st.markdown("**Atención Prioritaria**")
-                        st.caption("Estudiantes que intentan mucho pero no logran aprobar (Frustración).")
-                        if not struggling.empty:
-                            st.error(f"{len(struggling)} Estudiantes")
-                            with st.expander("Ver lista"):
-                                st.dataframe(struggling[['student_id', 'attempts', 'score']], hide_index=True)
-                        else:
-                            st.success("Ninguno detectado.")
-
-                    with c_act2:
-                        st.markdown("**Posible Adivinanza**")
-                        st.caption("Aprobaron por persistencia, no necesariamente por conocimiento.")
-                        if not guessers.empty:
-                            st.warning(f"{len(guessers)} Estudiantes")
-                            with st.expander("Ver lista"):
-                                st.dataframe(guessers[['student_id', 'attempts', 'score']], hide_index=True)
-                        else:
-                            st.success("Bajo nivel de adivinanza.")
-
-                    with c_act3:
-                        st.markdown("**Cuadro de Honor**")
-                        st.caption("Puntaje perfecto (o casi perfecto) al primer intento.")
-                        if not elite.empty:
-                            st.info(f"{len(elite)} Estudiantes")
-                            with st.expander("Ver lista"):
-                                st.dataframe(elite[['student_id', 'score']], hide_index=True)
-                        else:
-                            st.caption("Nadie (aún).")
-
-                    # Conclusión Final
-                    #st.write("")
-                    txt_conclusion = f"""
-                    **Conclusión:**  
-                    El curso tiene una eficiencia de **{eff_report:.1f}** puntos por intento. 
-                    Se recomienda contactar a los **{len(struggling)}** estudiantes en riesgo y felicitar a los **{len(elite)}** de alto rendimiento.
-                    """
-                    st.info(txt_conclusion, icon="🤖")
-
-        # Ejecutamos la función decorada
-        render_dashboard_content()
-            
     # --------------------------------------------------------------------------
-    # PESTAÑA 4: RESPUESTAS (NUEVA FUNCIONALIDAD)
+    # TAB 2: TABLA DE CALIFICACIONES
+    # --------------------------------------------------------------------------
+    with tab_grades:
+        df_all = get_cached_all_grades()
+        
+        c_btn, c_csv, c_f_exam, c_f_id = st.columns([1.2, 0.6, 2, 2], vertical_alignment="top")
+        
+        with c_btn:
+            if st.button("Actualizar", key="btn_refresh_grades"):
+                get_cached_all_grades.clear()
+                st.rerun()
+                
+        with c_csv:
+            if not df_all.empty:
+                # utf-8-sig para compatibilidad nativa con Microsoft Excel en Español
+                csv_bytes = df_all.to_csv(index=False).encode('utf-8-sig')
+                st.download_button("📥", data=csv_bytes, file_name="calificaciones.csv", mime="text/csv", help="Descargar en formato CSV")
+                
+        with c_f_exam:
+            f_exam = st.multiselect("Filtrar Examen", df_all['exam_id'].unique() if not df_all.empty else [], label_visibility="collapsed", placeholder="Examen...")
+        
+        with c_f_id:
+            f_id = st.text_input("Filtrar Cédula", placeholder="Buscar Cédula...", label_visibility="collapsed")
+
+        if not df_all.empty:
+            df_filtered = df_all.copy()
+            if f_exam:
+                df_filtered = df_filtered[df_filtered['exam_id'].isin(f_exam)]
+            if f_id:
+                df_filtered = df_filtered[df_filtered['student_id'].astype(str).str.contains(f_id, case=False, na=False)]
+
+            st.dataframe(
+                df_filtered,
+                width="stretch",
+                column_config={
+                    "is_correct": st.column_config.CheckboxColumn("Aprobado"),
+                    "score": st.column_config.ProgressColumn("Nota (0-20)", min_value=0, max_value=20, format="%.2f"),
+                    "last_updated": st.column_config.DatetimeColumn("Último Intento", format="DD/MM/YYYY hh:mm a")
+                },
+                hide_index=True
+            )
+        else:
+            st.info("No se han registrado intentos en el sistema.")
+
+    # --------------------------------------------------------------------------
+    # TAB 3: EDITOR DE EVALUACIONES (CMS)
+    # --------------------------------------------------------------------------
+    with tab_cms:
+        lista_examenes = db_manager.get_exam_list()
+        opciones_cms = ["➕ Crear Nuevo..."] + lista_examenes
+        
+        col_s, col_i = st.columns([1, 1], vertical_alignment="bottom")
+        with col_s:
+            sel_exam = st.selectbox("Seleccionar Evaluación", opciones_cms)
+            
+        if st.session_state.get('cms_last_selection') != sel_exam:
+            if sel_exam == "➕ Crear Nuevo...":
+                st.session_state['cms_code'] = DEFAULT_TEMPLATE
+                st.session_state['cms_id'] = ""
+            else:
+                st.session_state['cms_code'] = db_manager.get_exam_code(sel_exam) or ""
+                st.session_state['cms_id'] = sel_exam
+            st.session_state['cms_last_selection'] = sel_exam
+
+        with col_i:
+            if sel_exam == "➕ Crear Nuevo...":
+                nuevo_id = st.text_input("Identificador Único (slug)", value=st.session_state.get('cms_id', "")).strip()
+                st.session_state['cms_id'] = nuevo_id
+            else:
+                st.info(f"Editando: **{sel_exam}**")
+
+        codigo_editado = st.text_area("Código Fuente (Python)", value=st.session_state.get('cms_code', ""), height=380)
+
+        c_guardar, c_borrar, c_prev, c_rank = st.columns([2, 2, 3, 2])
+        
+        with c_guardar:
+            if st.button("💾 Guardar", type="primary"):
+                id_destino = st.session_state.get('cms_id', "").strip()
+                if not id_destino:
+                    st.error("Debe especificar un ID para la evaluación.")
+                else:
+                    db_manager.save_exam(id_destino, codigo_editado)
+                    st.success(f"Evaluación '{id_destino}' guardada.")
+                    st.session_state['cms_last_selection'] = id_destino
+                    st.rerun()
+
+        with c_borrar:
+            if sel_exam != "➕ Crear Nuevo...":
+                with st.popover("🗑️ Eliminar"):
+                    st.warning(f"¿Confirma la eliminación permanente de '{sel_exam}'?")
+                    if st.button("Confirmar Eliminación", type="primary"):
+                        db_manager.delete_exam(sel_exam)
+                        st.session_state['cms_last_selection'] = None
+                        st.rerun()
+
+        with c_prev:
+            if sel_exam != "➕ Crear Nuevo...":
+                st.link_button("🔗 Abrir Examen", f"/?eval={sel_exam}")
+
+        with c_rank:
+            if sel_exam != "➕ Crear Nuevo...":
+                st.link_button("🏆 Ranking", f"/?ranking={sel_exam}")
+
+    # --------------------------------------------------------------------------
+    # TAB 4: SOLUCIONADOR DETERMINISTA
     # --------------------------------------------------------------------------
     with tab_solver:
+        st.subheader("Simulador de Resultados por Cédula", divider=True)
+        st.caption("Ejecuta el código en modo headless con la semilla de un estudiante para auditoría.")
         
-        @st.fragment
-        def render_solver_content():
-            st.subheader("Simulador de Soluciones", divider=True)
-            st.info("Esta herramienta revela todas las variables generadas por el examen para una cédula específica.")
-            
-            c_sol1, c_sol2 = st.columns(2)
-            
-            with c_sol1:
-                # Al cambiar el examen, solo recarga este fragmento
-                exam_to_solve = st.selectbox("Elegir Examen", db_manager.get_exam_list(), key="solver_select")
-            
-            with c_sol2:
-                # Al escribir la cédula, solo recarga este fragmento
-                student_target = st.text_input("Cédula / ID Estudiante", key="solver_input")
-                
-            if st.button("🔍 Calcular Solución", type="primary"):
-                if not exam_to_solve or not student_target:
-                    st.error("Seleccione un examen e ingrese una cédula.")
-                    return # Salimos de la función sin error global
+        col_sol_e, col_sol_s = st.columns(2)
+        with col_sol_e:
+            sol_exam_id = st.selectbox("Evaluación", db_manager.get_exam_list(), key="solver_exam")
+        with col_sol_s:
+            sol_student_id = st.text_input("Cédula / Identificador", key="solver_student").strip()
 
-                raw_code = db_manager.get_exam_code(exam_to_solve)
-                
+        if st.button("Calcular Parámetros y Respuestas", type="primary"):
+            if not sol_exam_id or not sol_student_id:
+                st.warning("Seleccione una evaluación e ingrese una identificación válida.")
+            else:
+                raw_code = db_manager.get_exam_code(sol_exam_id)
                 if not raw_code:
-                    st.error("El código del examen está vacío.")
+                    st.error("No se encontró el código del examen.")
                 else:
-                    # 1. Sanitización (Quitar imports de streamlit)
-                    lines = raw_code.split('\n')
-                    safe_lines = [
-                        line for line in lines 
-                        if not line.strip().startswith("import streamlit") 
-                        and not line.strip().startswith("from streamlit")
-                    ]
-                    cleaned_code = "\n".join(safe_lines)
-
-                    # 2. Preparar entorno (Simulamos ST y DB)
-                    silent_st = SilentStreamlit(student_target)
+                    # Limpieza preventiva de llamadas conflictivas
+                    lineas = [l for l in raw_code.split('\n') if not l.strip().startswith(("import streamlit", "from streamlit"))]
+                    codigo_limpio = "\n".join(lineas)
+                    
+                    mock_st = SilentStreamlit(sol_student_id)
                     mock_db = MockDB()
                     
-                    # Contexto inicial (variables que inyectamos nosotros)
-                    base_context_keys = {
-                        'st', 'pd', 'np', 'random', 'db', 'EXAM_ID', 'datetime', 
-                        'is_admin', '__builtins__'
+                    builtins_ignorar = {
+                        'st', 'pd', 'np', 'random', 'db', 'EXAM_ID', 
+                        'datetime', 'is_admin', '__builtins__'
                     }
                     
-                    context_solver = {
-                        'st': silent_st,
+                    solver_env = {
+                        'st': mock_st,
                         'pd': pd,
                         'np': np,
                         'random': random,
                         'db': mock_db,
-                        'EXAM_ID': exam_to_solve,
+                        'EXAM_ID': sol_exam_id,
                         'datetime': datetime,
                         'is_admin': True
                     }
-                    
+
                     try:
-                        # 3. Ejecutar
-                        exec(cleaned_code, context_solver)
+                        exec(codigo_limpio, solver_env)
                         
                         st.divider()
-                        st.markdown(f"#### Variables encontradas para: `{student_target}`")
+                        st.markdown(f"#### Resultados generados para: `{sol_student_id}`")
                         
-                        # 4. Busqueda Prioritaria (Variables de respuesta común)
-                        priority_vars = ['solucion', 'solution', 'respuesta', 'result', 'answer']
-                        found_priority = False
-                        
-                        for var in priority_vars:
-                            if var in context_solver:
-                                val = context_solver[var]
-                                st.success(f"🎯 **{var}**: {val}")
-                                found_priority = True
-                        
-                        if not found_priority:
-                            st.caption("Mostrando todas las variables generadas:")
-
-                        # 5. Filtrado Inteligente de Variables (Muestra TODO lo que no sea basura)
-                        results_found = {}
-                        for k, v in context_solver.items():
-                            # Ignorar variables internas (_) o las que inyectamos nosotros
-                            if k.startswith('_') or k in base_context_keys:
+                        claves_prioritarias = ['solucion', 'solution', 'respuesta', 'result', 'answer']
+                        encontradas = False
+                        for clave in claves_prioritarias:
+                            if clave in solver_env:
+                                st.success(f"🎯 **{clave}**: `{solver_env[clave]}`")
+                                encontradas = True
+                                
+                        variables_generadas = {}
+                        for k, v in solver_env.items():
+                            if k.startswith('_') or k in builtins_ignorar:
                                 continue
-                            
-                            # Ignorar Módulos, Funciones y Clases (solo queremos datos)
                             if isinstance(v, (types.ModuleType, types.FunctionType, type)):
                                 continue
-                                
-                            results_found[k] = v
-
-                        # Mostrar resultado limpio en JSON/Diccionario
-                        if results_found:
-                            st.json(results_found)
-                        else:
-                            st.warning("El script se ejecutó pero no generó variables nuevas visibles.")
+                            variables_generadas[k] = v
                             
-                    except Exception as e:
-                        st.error("Error ejecutando la simulación:")
-                        st.error(str(e))
-                        with st.expander("Ver código ejecutado"):
-                            st.code(cleaned_code)
-
-        # Ejecutar el fragmento
-        render_solver_content()
-                        
+                        with st.expander("Inspeccionar todas las variables de memoria", expanded=not encontradas):
+                            st.json(variables_generadas)
+                            
+                    except Exception as err:
+                        st.error(f"Error durante la simulación: {err}")
+                        with st.expander("Ver traza de depuración"):
+                            st.exception(err)
 
 # ==============================================================================
-# OPTIMIZACIÓN: CACHÉ DEL RANKING (microlms.py)
+# 7. TABLA PÚBLICA DE POSICIONES (LEADERBOARD)
 # ==============================================================================
 
-# La base de datos "descansa" durante 59 segundos de cada minuto.
-@st.cache_data(ttl=60, show_spinner=False) 
-def get_cached_leaderboard_view(exam_id):
-    """
-    Procesa y ordena el ranking delegando el peso a SQL.
-    """
-    df_exam = db_manager.get_leaderboard_data(exam_id)
+def render_public_leaderboard(exam_id: str):
+    st.markdown(f"## 🏆 Cuadro de Honor: `{exam_id}`")
+    st.caption("Resultados oficiales actualizados en tiempo real.")
     
-    if df_exam.empty:
-        return pd.DataFrame()
-
-    # Asignar Posiciones
-    df_exam['Rank'] = range(1, len(df_exam) + 1)
-    
-    def get_medal(rank):
-        if rank <= 50: return f"{rank}"
-        return str(rank)
-    
-    df_exam['Posición'] = df_exam['Rank'].apply(get_medal)
-    
-    # Censurar IDs
-    def mask_id(sid):
-        s = str(sid)
-        return "•" * (len(s) - 4) + s[-4:] if len(s) > 4 else s
-        
-    df_exam['Estudiante'] = df_exam['student_id'].apply(mask_id)
-    
-    # Retornar columnas limpias
-    cols_show = ['Posición', 'Estudiante', 'score', 'attempts']
-    return df_exam[cols_show]
-    
-
-def render_public_leaderboard(exam_id):
-    st.markdown(f"##### 🏆 Ranking: {exam_id}")
-    
-    # Consumimos la caché de 60s
     df_view = get_cached_leaderboard_view(exam_id)
     
     if df_view.empty:
-        st.info("⏳ Esperando resultados... (Actualización cada minuto)")
-        if st.button("Probar suerte"):
+        st.info("Aún no hay aprobados registrados en esta evaluación.")
+        if st.button("Actualizar"):
             get_cached_leaderboard_view.clear()
             st.rerun()
         return
@@ -1223,58 +839,35 @@ def render_public_leaderboard(exam_id):
     st.dataframe(
         df_view,
         hide_index=True,
-        width='stretch',
+        width="stretch",
         column_config={
-            "score": st.column_config.ProgressColumn(
-                "Nota", 
-                format="%.2f", 
-                min_value=0, 
-                max_value=20,
-            ),
-            "attempts": st.column_config.NumberColumn("Intentos", format="%d")
-            #"Hora": "Llegada (VE)"
-        },
-        height=600
+            "Posición": st.column_config.TextColumn("Posición", width="small"),
+            "Estudiante": st.column_config.TextColumn("Identificación"),
+            "score": st.column_config.ProgressColumn("Calificación", min_value=0, max_value=20, format="%.2f"),
+            "attempts": st.column_config.NumberColumn("Intentos", format="%d"),
+            "last_updated": st.column_config.DatetimeColumn("Fecha", format="DD/MM/YYYY hh:mm a")
+        }
     )
     
-    # Mensaje técnico actualizado
-    st.caption(f"⚡ Datos cacheados (Se actualizan cada 60 segundos). Última carga: {datetime.now().strftime('%H:%M:%S')}")
-    
-    # Botón manual de refresco
-    if st.button("Actualizar Tabla"):
-        st.rerun()
-        
-
+    c_info, c_btn = st.columns([3, 1], vertical_alignment="center")
+    with c_info:
+        st.caption(f"⚡ Última sincronización: {datetime.now(TZ_VENEZUELA).strftime('%H:%M:%S')} (Hora VE)")
+    with c_btn:
+        if st.button("🔄 Actualizar", key="btn_refresh_leaderboard"):
+            get_cached_leaderboard_view.clear()
+            st.rerun()
 
 # ==============================================================================
-# 4. ENRUTADOR PRINCIPAL
+# 8. ENRUTADOR PRINCIPAL (SPA Router)
 # ==============================================================================
+
 def main():
-    # Obtener parámetros de la URL
-    query_params = st.query_params
+    params = st.query_params
     
-    # RUTA 1: Hacer Examen (?eval=ID)
-    if "eval" in query_params:
-        exam_id = query_params["eval"]
-        execute_exam(exam_id)
-        
-    # RUTA 2: Ver Ranking Público (?ranking=ID)  <--- NUEVA RUTA
-    elif "ranking" in query_params:
-        exam_id = query_params["ranking"]
-        # Limpiamos sidebar para vista "Kiosco"
-        st.set_page_config(layout="centered", page_title=f"Ranking {exam_id}", page_icon="🏆")
-        
-        # Inyectamos CSS para ocultar menú de hamburguesa en modo público (opcional)
-        st.markdown("""
-            <style>
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            </style>
-            """, unsafe_allow_html=True)
-            
-        render_public_leaderboard(exam_id)
-        
-    # RUTA 3: Panel Admin (Sin parámetros)
+    if "eval" in params:
+        execute_exam(params["eval"])
+    elif "ranking" in params:
+        render_public_leaderboard(params["ranking"])
     else:
         render_admin_panel()
 
