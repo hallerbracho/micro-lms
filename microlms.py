@@ -420,7 +420,7 @@ class SilentStreamlit:
     def checkbox(self, label, **kwargs): return False
     def toggle(self, label, **kwargs): return False
     def button(self, label, **kwargs): return False
-    def form_submit_button(self, label="Submit", **kwargs): return True
+    def form_submit_button(self, label="Submit", **kwargs): return False
 
     # Métodos neutros
     def stop(self): pass
@@ -612,7 +612,7 @@ def render_admin_panel():
                         alt.Tooltip('attempts:Q', title='Intentos')
                     ]
                 ).interactive()
-                st.altair_chart(scatter_chart, width="stretch")
+                st.altair_chart(scatter_chart, use_container_width=True)
 
             with sub_report:
                 st.subheader("Diagnóstico Automatizado del Rendimiento", divider=True)
@@ -676,7 +676,7 @@ def render_admin_panel():
 
             st.dataframe(
                 df_filtered,
-                width="stretch",
+                use_container_width=True,
                 column_config={
                     "is_correct": st.column_config.CheckboxColumn("Aprobado"),
                     "score": st.column_config.ProgressColumn("Nota (0-20)", min_value=0, max_value=20, format="%.2f"),
@@ -800,8 +800,9 @@ def render_admin_panel():
                         encontradas = False
                         for clave in claves_prioritarias:
                             if clave in solver_env:
-                                st.success(f"🎯 **{clave}**: `{solver_env[clave]}`")
+                                st.success(f"**{clave}**: `{solver_env[clave]}`")
                                 encontradas = True
+                                break
                                 
                         variables_generadas = {}
                         for k, v in solver_env.items():
@@ -839,7 +840,7 @@ def render_public_leaderboard(exam_id: str):
     st.dataframe(
         df_view,
         hide_index=True,
-        width="stretch",
+        use_container_width=True,
         column_config={
             "Posición": st.column_config.TextColumn("Posición", width="small"),
             "Estudiante": st.column_config.TextColumn("Identificación"),
@@ -873,4 +874,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
