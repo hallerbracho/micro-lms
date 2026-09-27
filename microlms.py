@@ -247,12 +247,25 @@ class DatabaseManager:
             except Exception:
                 score = prev_score
         else:
-            # Algoritmo logístico acotado por defecto (escala 0 - 20)
-            base_progreso = raw_score if raw_score is not None else (100.0 if is_correct else 30.0)
-            factor_intentos = 0.50 + 0.50 / (1.0 + 0.15 * max(0, current_attempts - 1))
-            rendimiento = base_progreso * factor_intentos
-            score = 20.0 / (1.0 + np.exp(-0.08 * (rendimiento - 50.0)))
-            score = float(np.clip(score, 2.0, 20.0))
+            else:
+            # Fallback psicométrico normal estándar (Blom Probit) para 20 parámetros
+            import math
+            r_val = float(raw_score) if raw_score is not None else (20.0 if is_correct else 7.0)
+            if r_val > 20.0:
+                r_val = (r_val / 100.0) * 20.0
+            r_val = max(0.0, min(20.0, r_val))
+            
+            p = (r_val + 0.375) / 20.75
+            a = 0.147
+            x = max(-0.999999, min(0.999999, 2.0 * p - 1.0))
+            w = math.log(1.0 - x * x)
+            t1 = 2.0 / (math.pi * a) + w / 2.0
+            z_raw = math.sqrt(2.0) * (1.0 if x >= 0 else -1.0) * math.sqrt(math.sqrt(max(0.0, t1 * t1 - w / a)) - t1)
+            
+            att = max(1, int(current_attempts))
+            pen_z = 0.35 * math.sqrt(math.log(att)) if att > 1 else 0.0
+            score = 10.50 + 4.15 * (z_raw - pen_z)
+            score = float(np.clip(score, 1.0, 19.5))
 
         final_score = max(prev_score, score) if already_passed else score
         new_passed = 1 if (already_passed or is_correct) else 0
