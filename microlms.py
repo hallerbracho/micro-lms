@@ -374,7 +374,7 @@ def get_cached_leaderboard_view(exam_id: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     def rank_to_medal(idx: int) -> str:
-        medals = {1: "🥇 1", 2: "🥈 2", 3: "🥉 3"}
+        medals = {1: "1", 2: "2", 3: "3"}
         return medals.get(idx, f"#{idx}")
 
     df_exam['Posición'] = [rank_to_medal(i + 1) for i in range(len(df_exam))]
