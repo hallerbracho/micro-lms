@@ -246,8 +246,7 @@ class DatabaseManager:
                     score = float(score_func(prev_attempts))
             except Exception:
                 score = prev_score
-        else:
-            else:
+        else:            
             # Fallback psicométrico normal estándar (Blom Probit) para 20 parámetros
             import math
             r_val = float(raw_score) if raw_score is not None else (20.0 if is_correct else 7.0)
