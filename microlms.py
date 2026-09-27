@@ -161,6 +161,14 @@ def get_db_connection():
             PRIMARY KEY (exam_id, student_id)
         )
     """)
+
+    # Migración preventiva en caso de tablas preexistentes
+    for col_def in ["student_name TEXT", "student_list_n INTEGER"]:
+        try:
+            conn.execute(f"ALTER TABLE grades ADD COLUMN {col_def}")
+        except Exception:
+            pass  # La columna ya existe
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS exams (
             exam_id TEXT PRIMARY KEY,
@@ -209,7 +217,10 @@ class DatabaseManager:
         student_id: str, 
         is_correct: bool, 
         raw_score: Optional[float] = None, 
-        score_func: Optional[Any] = None
+        score_func: Optional[Any] = None,
+        student_name: Optional[str] = None,
+        student_list_n: Optional[int] = None,
+        **kwargs
     ) -> Tuple[int, float]:
         conn = self._get_conn()
         
@@ -270,10 +281,10 @@ class DatabaseManager:
         new_passed = 1 if (already_passed or is_correct) else 0
         current_time_ve = self.get_ve_time_str()
 
-        # 4. Upsert atómico
+        # 4. Upsert atómico persistiendo nombre y número de lista
         conn.execute("""
-            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO grades (exam_id, student_id, attempts, is_correct, score, last_updated, student_name, student_list_n)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(exam_id, student_id) DO UPDATE SET
                 attempts = attempts + 1,
                 is_correct = MAX(grades.is_correct, excluded.is_correct),
@@ -282,8 +293,10 @@ class DatabaseManager:
                     WHEN grades.is_correct THEN grades.score
                     ELSE excluded.score
                 END,
-                last_updated = excluded.last_updated
-        """, (exam_id, student_id, 1, new_passed, round(final_score, 2), current_time_ve))
+                last_updated = excluded.last_updated,
+                student_name = COALESCE(excluded.student_name, grades.student_name),
+                student_list_n = COALESCE(excluded.student_list_n, grades.student_list_n)
+        """, (exam_id, student_id, 1, new_passed, round(final_score, 2), current_time_ve, student_name, student_list_n))
         conn.commit()
 
         # Invalidar cachés de lecturas
@@ -684,14 +697,26 @@ def render_admin_panel():
             if f_exam:
                 df_filtered = df_filtered[df_filtered['exam_id'].isin(f_exam)]
             if f_id:
-                df_filtered = df_filtered[df_filtered['student_id'].astype(str).str.contains(f_id, case=False, na=False)]
+                df_filtered = df_filtered[
+                    df_filtered['student_id'].astype(str).str.contains(f_id, case=False, na=False) |
+                    df_filtered['student_name'].astype(str).str.contains(f_id, case=False, na=False)
+                ]
+
+            # Reordenamiento de columnas preferente: Lista, Cédula, Nombre, Calificación
+            columnas_orden = ['student_list_n', 'student_id', 'student_name', 'score', 'is_correct', 'attempts', 'last_updated', 'exam_id']
+            cols_disponibles = [c for c in columnas_orden if c in df_filtered.columns] + [c for c in df_filtered.columns if c not in columnas_orden]
+            df_display = df_filtered[cols_disponibles].sort_values(by=['exam_id', 'student_list_n'], ascending=[True, True])
 
             st.dataframe(
-                df_filtered,
+                df_display,
                 use_container_width=True,
                 column_config={
+                    "student_list_n": st.column_config.NumberColumn("N°", width="small", format="%d"),
+                    "student_id": st.column_config.TextColumn("Cédula"),
+                    "student_name": st.column_config.TextColumn("Apellidos y Nombres"),
                     "is_correct": st.column_config.CheckboxColumn("Aprobado"),
                     "score": st.column_config.ProgressColumn("Nota (0-20)", min_value=0, max_value=20, format="%.2f"),
+                    "attempts": st.column_config.NumberColumn("Intentos", format="%d"),
                     "last_updated": st.column_config.DatetimeColumn("Último Intento", format="DD/MM/YYYY hh:mm a")
                 },
                 hide_index=True
