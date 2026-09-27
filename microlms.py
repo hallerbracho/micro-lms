@@ -862,7 +862,7 @@ def render_admin_panel():
 # ==============================================================================
 
 def render_public_leaderboard(exam_id: str):
-    st.markdown(f"## 🏆 Cuadro de Honor: `{exam_id}`")
+    st.markdown(f"## Cuadro de Honor: `{exam_id}`")
     st.caption("Resultados oficiales actualizados en tiempo real.")
     
     df_view = get_cached_leaderboard_view(exam_id)
@@ -889,9 +889,9 @@ def render_public_leaderboard(exam_id: str):
     
     c_info, c_btn = st.columns([3, 1], vertical_alignment="center")
     with c_info:
-        st.caption(f"⚡ Última sincronización: {datetime.now(TZ_VENEZUELA).strftime('%H:%M:%S')} (Hora VE)")
+        st.caption(f"Última sincronización: {datetime.now(TZ_VENEZUELA).strftime('%H:%M:%S')} (Hora VE)")
     with c_btn:
-        if st.button("🔄 Actualizar", key="btn_refresh_leaderboard"):
+        if st.button("Actualizar", key="btn_refresh_leaderboard"):
             get_cached_leaderboard_view.clear()
             st.rerun()
 
